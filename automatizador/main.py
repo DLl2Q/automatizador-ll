@@ -14,8 +14,11 @@ Atajos globales (funcionan aunque la ventana no tenga el foco):
     Esc -> detener grabacion y reproduccion (parada de emergencia)
 """
 
+import argparse
 import os
+import subprocess
 import sys
+import threading
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
@@ -62,6 +65,8 @@ ICON_RECORD = "\u23FA"
 ICON_STOP = "\u23F9"
 ICON_PLAY = "\u25B6"
 ICON_SEARCH = "\U0001F50D"
+ICON_PLAY_FROM = "\u23E9"
+ICON_BACKGROUND = "\U0001F3C3"
 
 
 class App:
@@ -194,6 +199,14 @@ class App:
         run_menu = tk.Menu(menubar, tearoff=False)
         run_menu.add_command(label="Grabar / Detener (F9)", command=self.toggle_recording)
         run_menu.add_command(label="Reproducir / Detener (F10)", command=self.toggle_playback)
+        run_menu.add_command(
+            label="Ejecutar desde la accion seleccionada", command=self.play_from_selected
+        )
+        run_menu.add_separator()
+        run_menu.add_command(
+            label="Ejecutar macro seleccionada en 2do plano",
+            command=self._run_background_selected,
+        )
         run_menu.add_separator()
         run_menu.add_command(label="Parada de emergencia (Esc)", command=self.emergency_stop)
         menubar.add_cascade(label="Ejecucion", menu=run_menu)
@@ -302,6 +315,12 @@ class App:
         ttk.Button(
             buttons, text=f"{ICON_REFRESH} Refrescar", command=self._refresh_macro_list
         ).pack(fill="x", pady=2)
+        ttk.Separator(buttons, orient="horizontal").pack(fill="x", pady=4)
+        ttk.Button(
+            buttons,
+            text=f"{ICON_BACKGROUND} Ejecutar en 2do plano",
+            command=self._run_background_selected,
+        ).pack(fill="x", pady=2)
 
     def _build_actions_panel(self, parent):
         frame = ttk.LabelFrame(parent, text="Panel de acciones")
@@ -354,6 +373,11 @@ class App:
         ).pack(side="left", padx=2)
         ttk.Button(
             buttons, text=f"{ICON_CLEAR} Vaciar lista", command=self._clear_actions
+        ).pack(side="right", padx=2)
+        ttk.Button(
+            buttons,
+            text=f"{ICON_PLAY_FROM} Ejecutar desde aqui",
+            command=self.play_from_selected,
         ).pack(side="right", padx=2)
 
     def _build_record_panel(self, parent):
@@ -451,6 +475,31 @@ class App:
         self.play_button.config(text=f"{ICON_STOP} Detener (F10)")
         self.status_var.set("Reproduciendo...")
         self.player.play(self.current_events, speed=speed, repeat=repeat)
+
+    def play_from_selected(self):
+        """Reproduce la macro actual empezando por la accion seleccionada en el
+        panel de acciones, sin tocar el comportamiento de "Reproducir (F10)"."""
+        if self.recorder.is_recording:
+            return
+        if self.player.is_playing:
+            self.status_var.set("Ya hay una reproduccion en curso.")
+            return
+        if not self.current_events:
+            self.status_var.set("No hay acciones cargadas o grabadas para reproducir.")
+            return
+        index = self._selected_index()
+        if index is None:
+            messagebox.showinfo(
+                APP_TITLE, "Selecciona en el panel de acciones desde donde ejecutar."
+            )
+            return
+        speed = max(self.speed_var.get(), 0.1)
+        repeat = self.repeat_var.get()
+        remaining = len(self.current_events) - index
+        self.progress.config(value=0, maximum=max(remaining, 1))
+        self.play_button.config(text=f"{ICON_STOP} Detener (F10)")
+        self.status_var.set(f"Reproduciendo desde la accion #{index + 1}...")
+        self.player.play(self.current_events, speed=speed, repeat=repeat, start_index=index)
 
     def _on_play_progress(self, done, total):
         def update():
@@ -694,6 +743,45 @@ class App:
             self._refresh_macro_list()
             self.status_var.set(f"Macro '{name}' eliminada.")
 
+    # ---------- Ejecucion en segundo plano ----------
+    def _run_background_selected(self):
+        """Lanza la macro guardada seleccionada en un proceso independiente
+        (sin ventana), que sigue corriendo aunque se cierre esta aplicacion."""
+        name = self._selected_name()
+        if not name:
+            messagebox.showinfo(
+                APP_TITLE,
+                "Selecciona, en la lista de macros guardadas, la macro a "
+                "ejecutar en segundo plano.",
+            )
+            return
+        speed = max(self.speed_var.get(), 0.1)
+        repeat = self.repeat_var.get()
+        script = os.path.abspath(__file__)
+        cmd = [
+            sys.executable,
+            script,
+            "--background",
+            name,
+            "--speed",
+            str(speed),
+            "--repeat",
+            str(repeat),
+        ]
+        popen_kwargs = {}
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        try:
+            subprocess.Popen(cmd, **popen_kwargs)
+        except OSError as exc:
+            messagebox.showerror(
+                APP_TITLE, f"No se pudo iniciar '{name}' en segundo plano:\n{exc}"
+            )
+            return
+        self.status_var.set(
+            f"Macro '{name}' ejecutandose en segundo plano (proceso independiente)."
+        )
+
     # ---------- Cierre ----------
     def _on_close(self):
         if self.recorder.is_recording:
@@ -705,7 +793,64 @@ class App:
         self.root.destroy()
 
 
+def run_macro_headless(name, speed=1.0, repeat=1):
+    """Carga una macro guardada y la reproduce sin interfaz grafica (modo
+    `--background`). Pensado para ejecutarse como proceso aparte (lanzado
+    desde la UI con "Ejecutar en 2do plano", desde la consola o desde el
+    Programador de tareas de Windows) y terminar solo cuando la reproduccion
+    termina (o se le mata el proceso)."""
+    try:
+        events = storage.load_macro(name)
+    except (OSError, ValueError) as exc:
+        print(f"No se pudo cargar la macro '{name}': {exc}")
+        return 1
+    if not events:
+        print(f"La macro '{name}' no tiene acciones para reproducir.")
+        return 1
+
+    done = threading.Event()
+
+    def _on_finished():
+        done.set()
+
+    def _on_progress(done_count, total):
+        print(f"[{name}] {done_count}/{total}")
+
+    player = Player(on_progress=_on_progress, on_finished=_on_finished)
+    print(f"Ejecutando '{name}' en segundo plano (velocidad={speed}, repeticiones={repeat})...")
+    player.play(events, speed=max(speed, 0.1), repeat=repeat)
+    done.wait()
+    print(f"Macro '{name}' finalizada.")
+    return 0
+
+
 def main():
+    parser = argparse.ArgumentParser(description=APP_TITLE)
+    parser.add_argument(
+        "--background",
+        metavar="NOMBRE_MACRO",
+        help=(
+            "Ejecuta la macro guardada NOMBRE_MACRO en segundo plano, sin "
+            "abrir la interfaz grafica, y termina al finalizar."
+        ),
+    )
+    parser.add_argument(
+        "--speed",
+        type=float,
+        default=1.0,
+        help="Velocidad de reproduccion para --background (por defecto 1.0).",
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="Repeticiones para --background; 0 = infinito (por defecto 1).",
+    )
+    args = parser.parse_args()
+
+    if args.background:
+        sys.exit(run_macro_headless(args.background, speed=args.speed, repeat=args.repeat))
+
     root = tk.Tk()
     App(root)
     root.mainloop()

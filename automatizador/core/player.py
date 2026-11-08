@@ -31,17 +31,25 @@ class Player:
     def is_playing(self):
         return self._thread is not None and self._thread.is_alive()
 
-    def play(self, events, speed=1.0, repeat=1):
+    def play(self, events, speed=1.0, repeat=1, start_index=0):
         """Inicia la reproduccion en un hilo aparte.
 
         speed: multiplicador de velocidad (2.0 = el doble de rapido).
         repeat: numero de repeticiones; 0 o negativo significa infinito.
+        start_index: indice (0-based) de la primera accion a ejecutar; permite
+            reproducir "desde la accion seleccionada" en vez de desde el inicio.
+            Por defecto 0, es decir, el comportamiento de siempre (toda la lista).
         """
         if self.is_playing or not events:
             return
+        events = list(events)
+        if start_index and 0 < start_index < len(events):
+            events = events[start_index:]
+        if not events:
+            return
         self._stop_flag.clear()
         self._thread = threading.Thread(
-            target=self._run, args=(list(events), speed, repeat), daemon=True
+            target=self._run, args=(events, speed, repeat), daemon=True
         )
         self._thread.start()
 

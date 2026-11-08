@@ -60,6 +60,13 @@ accion, igual que en el programa original.
 - Reproduccion fiel a los tiempos grabados o definidos a mano, con control de:
   - **Velocidad** (0.1x a 10x).
   - **Repeticiones** (un numero fijo, o 0 = bucle infinito).
+  - **Ejecutar desde la accion seleccionada**: reproduce solo desde el
+    paso elegido en el panel de acciones hasta el final, sin tocar la
+    reproduccion completa de siempre (ver **Como se usa**).
+  - **Ejecutar una macro guardada en segundo plano**: la corre en un
+    proceso aparte, sin ventana, independiente de la ventana principal
+    (y tambien disponible por linea de comandos con `--background`, ver
+    **Como se usa**).
 - Guardar y cargar macros como archivos `.json` dentro de `macros/`
   (botones **Nueva macro**, **Guardar**, **Guardar como...**, **Cargar**,
   **Eliminar**, **Refrescar**). Las macros guardadas con la version anterior
@@ -102,6 +109,10 @@ py -3 -m pip install -r requirements.txt
 py -3 main.py
 ```
 
+> `main.py` tambien acepta `--background NOMBRE_MACRO [--speed N] [--repeat N]`
+> para ejecutar una macro guardada sin abrir la interfaz grafica (ver
+> **Ejecutar una macro guardada en segundo plano** en **Como se usa**).
+
 ## Como se usa
 
 ### Grabando una macro
@@ -131,6 +142,70 @@ py -3 main.py
 - Para volver a usar una macro guardada, selecciona su nombre en la lista
   de la izquierda y pulsa **Cargar**.
 - `Esc` detiene todo en cualquier momento (parada de emergencia).
+
+### Ejecutar desde la accion seleccionada
+
+Permite saltarse al principio de la macro y empezar la reproduccion justo
+en el paso que elijas, sin tener que borrar ni reordenar nada:
+
+1. Carga o arma la macro como siempre y, en el **panel de acciones**,
+   selecciona (con un clic) la fila desde la que quieres empezar.
+2. Pulsa **"⏩ Ejecutar desde aqui"** (abajo a la derecha del panel de
+   acciones) o el menu **Ejecucion -> Ejecutar desde la accion
+   seleccionada**.
+3. Se reproducen, respetando **Velocidad** y **Repeticiones**, todas las
+   acciones desde la seleccionada hasta el final de la lista. La barra de
+   progreso y el boton **Reproducir / Detener (F10)** funcionan igual que
+   con una reproduccion normal, asi que `F10` o el boton de reproduccion
+   tambien la detienen.
+
+> Esto no reemplaza a **Reproducir (F10)**: ese boton sigue reproduciendo
+> la macro completa de siempre; "Ejecutar desde aqui" es una forma extra
+> de arrancar a mitad de camino (util para probar solo el tramo final de
+> una macro larga sin esperar a que se repita todo desde el principio).
+
+### Ejecutar una macro guardada en segundo plano
+
+Lanza una macro guardada como un **proceso aparte, sin ventana**, que
+sigue corriendo aunque cierres (o sigas usando) la ventana principal del
+Automatizador. Util para dejar una macro trabajando mientras usas la
+compu para otra cosa, o para lanzarla desde el Programador de tareas de
+Windows sin que aparezca ninguna interfaz.
+
+**Desde la interfaz grafica:**
+
+1. En la lista **"Macros guardadas"**, selecciona la macro que quieres
+   correr en segundo plano (no hace falta cargarla en el panel de
+   acciones).
+2. Ajusta, si queres, **Velocidad** y **Repeticiones** (se usan los
+   mismos valores que ves en el panel de **Reproduccion**).
+3. Pulsa **"🏃 Ejecutar en 2do plano"** (debajo de la lista de macros) o
+   el menu **Ejecucion -> Ejecutar macro seleccionada en 2do plano**.
+4. El Automatizador abre un proceso de Python independiente que carga esa
+   macro y la reproduce sin mostrar ninguna ventana; la barra de estado
+   confirma que el proceso se inicio. Podes seguir usando la aplicacion
+   (grabar, editar, reproducir otra macro) mientras esa reproduccion
+   corre por su cuenta.
+
+**Desde la linea de comandos** (por ejemplo, para programarla con el
+Programador de tareas de Windows), sin abrir la interfaz grafica:
+
+```bash
+cd automatizador
+py -3 main.py --background "NombreDeLaMacro"
+py -3 main.py --background "NombreDeLaMacro" --speed 1.5 --repeat 0
+```
+
+- `--background NOMBRE` (obligatorio para este modo): nombre de la macro
+  guardada en `macros/` (el mismo que ves en la lista de la izquierda).
+- `--speed` (opcional, por defecto `1.0`): multiplicador de velocidad.
+- `--repeat` (opcional, por defecto `1`): numero de repeticiones; `0` =
+  bucle infinito (se detiene matando el proceso).
+
+El proceso en segundo plano no abre ninguna ventana (ni de la
+aplicacion ni consola, cuando se lanza desde la interfaz grafica),
+imprime su progreso por la salida estandar cuando se ejecuta desde una
+consola visible, y termina solo cuando la macro finaliza.
 
 ## Estructura del proyecto
 
