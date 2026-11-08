@@ -28,8 +28,11 @@ class ActionDialog(tk.Toplevel):
         self._field_vars = {}
         self._key_listener = None
         self._capture_var = None
+        self._variant_type = None
+        self._variant_label_to_member = {}
 
-        initial_type = (event or {}).get("type", actions.ACTION_ORDER[0])
+        raw_initial_type = (event or {}).get("type", actions.ACTION_ORDER[0])
+        initial_type = actions.group_for_member(raw_initial_type) or raw_initial_type
 
         top = ttk.Frame(self, padding=10)
         top.pack(fill="both", expand=True)
@@ -72,39 +75,87 @@ class ActionDialog(tk.Toplevel):
         label = self.type_combo.get()
         return self._label_to_type.get(label, actions.ACTION_ORDER[0])
 
+    def _current_member_type(self):
+        """Tipo de accion concreto a ejecutar: igual a `_current_type()`
+        salvo que esa seleccion sea un grupo (mouse/teclado), en cuyo caso
+        se devuelve la variante elegida en el selector "Accion:"."""
+        action_type = self._current_type()
+        if actions.is_group(action_type):
+            members = actions.members_for(action_type)
+            return self._variant_type if self._variant_type in members else members[0]
+        return action_type
+
+    def _on_variant_change(self):
+        label = self.variant_var.get()
+        self._variant_type = self._variant_label_to_member.get(label, self._variant_type)
+        self._rebuild_fields()
+
     def _rebuild_fields(self, event=None):
         for child in self.fields_frame.winfo_children():
             child.destroy()
         self._field_vars = {}
 
         action_type = self._current_type()
-        event = event if (event and event.get("type") == action_type) else None
+        is_group = actions.is_group(action_type)
+        members = actions.members_for(action_type)
+
+        if event and event.get("type") in members:
+            member_type = event.get("type")
+        elif self._variant_type in members:
+            member_type = self._variant_type
+        else:
+            member_type = members[0]
+        matched_event = event if (event and event.get("type") == member_type) else None
 
         row = 0
+
+        if is_group:
+            self._variant_label_to_member = {
+                actions.member_label(m): m for m in members
+            }
+            ttk.Label(
+                self.fields_frame,
+                text=actions.ACTION_TYPES[action_type].get("variant_label", "Accion:"),
+            ).grid(row=row, column=0, sticky="w", pady=3)
+            self.variant_var = tk.StringVar(value=actions.member_label(member_type))
+            variant_combo = ttk.Combobox(
+                self.fields_frame,
+                textvariable=self.variant_var,
+                state="readonly",
+                width=28,
+                values=[actions.member_label(m) for m in members],
+            )
+            variant_combo.grid(row=row, column=1, columnspan=2, sticky="w", pady=3)
+            variant_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_variant_change())
+            row += 1
+
         delay_label = (
             "Duracion de la pausa (s):"
-            if action_type == "wait"
+            if member_type == "wait"
             else "Retraso antes de ejecutar (s):"
         )
         ttk.Label(self.fields_frame, text=delay_label).grid(
             row=row, column=0, sticky="w", pady=3
         )
-        delay_default = (event or {}).get("delay", 1.0 if action_type == "wait" else 0.0)
+        delay_default = (matched_event or {}).get(
+            "delay", 1.0 if member_type == "wait" else 0.0
+        )
         self.delay_var = tk.StringVar(value=str(delay_default))
         ttk.Entry(self.fields_frame, textvariable=self.delay_var, width=10).grid(
             row=row, column=1, sticky="w", pady=3
         )
         row += 1
 
-        for name, label, kind, default, choices in actions.fields_for(action_type):
-            value = (event or {}).get(name, default)
+        for name, label, kind, default, choices in actions.fields_for(member_type):
+            value = (matched_event or {}).get(name, default)
             ttk.Label(self.fields_frame, text=f"{label}:").grid(
                 row=row, column=0, sticky="w", pady=3
             )
             self._build_field(row, name, kind, value, choices)
             row += 1
 
-        self._build_extra_tools(row, action_type)
+        self._build_extra_tools(row, member_type)
+        self._variant_type = member_type
 
     def _build_field(self, row, name, kind, value, choices):
         frame = self.fields_frame
@@ -415,7 +466,7 @@ class ActionDialog(tk.Toplevel):
 
     # ---------- aceptar / cancelar ----------
     def _collect_values(self):
-        action_type = self._current_type()
+        member_type = self._current_member_type()
         try:
             delay = float(self.delay_var.get())
             if delay < 0:
@@ -423,8 +474,8 @@ class ActionDialog(tk.Toplevel):
         except ValueError as exc:
             raise ValueError("El retraso/duracion debe ser un numero >= 0.") from exc
 
-        event = {"type": action_type, "delay": delay}
-        for name, label, kind, _default, _choices in actions.fields_for(action_type):
+        event = {"type": member_type, "delay": delay}
+        for name, label, kind, _default, _choices in actions.fields_for(member_type):
             kind_stored, widget_or_var = self._field_vars[name]
             if kind_stored == "textarea":
                 raw = widget_or_var.get("1.0", "end-1c")

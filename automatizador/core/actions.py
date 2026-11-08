@@ -25,8 +25,15 @@ from . import keys
 #   "path"     -> ruta de archivo (con boton "Elegir...")
 
 ACTION_TYPES = {
+    "mouse": {
+        "label": "Accion de mouse",
+        "group": True,
+        "variant_label": "Accion:",
+        "members": ["move", "click", "mouse_drag", "scroll"],
+    },
     "move": {
         "label": "Mover mouse",
+        "short_label": "Mover",
         "fields": [
             ("x", "Posicion X", "int", 0, None),
             ("y", "Posicion Y", "int", 0, None),
@@ -34,6 +41,7 @@ ACTION_TYPES = {
     },
     "click": {
         "label": "Clic de mouse",
+        "short_label": "Clic / presionar / soltar boton",
         "fields": [
             ("x", "Posicion X", "int", 0, None),
             ("y", "Posicion Y", "int", 0, None),
@@ -44,6 +52,7 @@ ACTION_TYPES = {
     },
     "mouse_drag": {
         "label": "Arrastrar mouse",
+        "short_label": "Arrastrar",
         "fields": [
             ("x1", "Desde X", "int", 0, None),
             ("y1", "Desde Y", "int", 0, None),
@@ -55,6 +64,7 @@ ACTION_TYPES = {
     },
     "scroll": {
         "label": "Rueda del mouse",
+        "short_label": "Rueda",
         "fields": [
             ("x", "Posicion X", "int", 0, None),
             ("y", "Posicion Y", "int", 0, None),
@@ -129,20 +139,29 @@ ACTION_TYPES = {
             ),
         ],
     },
+    "key": {
+        "label": "Accion de teclado",
+        "group": True,
+        "variant_label": "Accion:",
+        "members": ["key_press", "key_down", "key_up"],
+    },
     "key_down": {
         "label": "Tecla abajo (mantener)",
+        "short_label": "Mantener presionada (abajo)",
         "fields": [
             ("key", "Tecla", "key", "", None),
         ],
     },
     "key_up": {
         "label": "Tecla arriba (soltar)",
+        "short_label": "Soltar (arriba)",
         "fields": [
             ("key", "Tecla", "key", "", None),
         ],
     },
     "key_press": {
         "label": "Presionar tecla",
+        "short_label": "Presionar y soltar",
         "fields": [
             ("key", "Tecla", "key", "", None),
         ],
@@ -181,23 +200,57 @@ ACTION_TYPES = {
 }
 
 # Orden en el que se muestran los tipos en el selector "Agregar accion".
+# Las acciones de mouse (mover/clic/arrastrar/rueda) y de teclado
+# (presionar/mantener/soltar) se agrupan bajo una sola entrada ("mouse" y
+# "key") que luego permite elegir la variante concreta dentro del dialogo.
 ACTION_ORDER = [
-    "move",
-    "click",
-    "mouse_drag",
-    "scroll",
+    "mouse",
     "capture_image",
     "find_image",
     "find_ocr",
-    "key_press",
-    "key_down",
-    "key_up",
+    "key",
     "type_text",
     "wait",
     "run_program",
     "open_url",
     "message",
 ]
+
+# Mapa inverso: tipo de accion concreto -> clave del grupo que lo contiene
+# (se calcula una sola vez a partir de ACTION_TYPES).
+_GROUP_OF_MEMBER = {
+    member: group_key
+    for group_key, spec in ACTION_TYPES.items()
+    if spec.get("group")
+    for member in spec.get("members", [])
+}
+
+
+def is_group(action_type):
+    """True si `action_type` es una entrada "sombrilla" (mouse/teclado) que
+    agrupa varias variantes concretas en vez de ser una accion ejecutable."""
+    return bool(ACTION_TYPES.get(action_type, {}).get("group"))
+
+
+def members_for(action_type):
+    """Lista de tipos concretos que agrupa `action_type`, o [action_type]
+    si no es un grupo."""
+    if is_group(action_type):
+        return ACTION_TYPES[action_type]["members"]
+    return [action_type]
+
+
+def group_for_member(action_type):
+    """Clave del grupo (p.ej. "mouse") al que pertenece un tipo concreto
+    (p.ej. "click"), o None si ese tipo no pertenece a ningun grupo."""
+    return _GROUP_OF_MEMBER.get(action_type)
+
+
+def member_label(action_type):
+    """Etiqueta corta para mostrar un tipo concreto dentro del selector de
+    variante de un grupo (p.ej. "Clic / presionar / soltar boton")."""
+    spec = ACTION_TYPES.get(action_type, {})
+    return spec.get("short_label", spec.get("label", action_type))
 
 
 def label_for(action_type):
@@ -209,7 +262,12 @@ def fields_for(action_type):
 
 
 def default_event(action_type):
-    """Crea un evento con los valores por defecto de ese tipo de accion."""
+    """Crea un evento con los valores por defecto de ese tipo de accion.
+
+    Si `action_type` es un grupo (mouse/teclado), se usa la primera
+    variante del grupo como tipo concreto del evento."""
+    if is_group(action_type):
+        action_type = members_for(action_type)[0]
     event = {"type": action_type, "delay": 0.0}
     for name, _label, _kind, default, _choices in fields_for(action_type):
         event[name] = default
