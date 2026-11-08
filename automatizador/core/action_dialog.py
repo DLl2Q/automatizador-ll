@@ -1,5 +1,6 @@
 """Dialogo para agregar o editar manualmente una accion del panel de acciones."""
 
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -177,7 +178,7 @@ class ActionDialog(tk.Toplevel):
 
     def _build_extra_tools(self, row, action_type):
         frame = self.fields_frame
-        if action_type in ("capture_image", "find_image"):
+        if action_type in ("capture_image", "find_image", "find_ocr"):
             ttk.Button(
                 frame,
                 text="Seleccionar region en pantalla...",
@@ -191,8 +192,26 @@ class ActionDialog(tk.Toplevel):
             row += 1
         elif action_type == "find_image":
             ttk.Button(
+                frame,
+                text="Capturar imagen de referencia...",
+                command=self._do_capture_reference_image,
+            ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 3))
+            row += 1
+            ttk.Button(
                 frame, text="Probar busqueda", command=self._do_test_find
             ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 3))
+            row += 1
+        elif action_type == "find_ocr":
+            ttk.Button(
+                frame, text="Probar busqueda", command=self._do_test_find_ocr
+            ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 3))
+            row += 1
+        if action_type == "click":
+            ttk.Button(
+                frame,
+                text="Capturar posicion del mouse...",
+                command=self._do_capture_click_position,
+            ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(10, 3))
             row += 1
         return row
 
@@ -241,6 +260,61 @@ class ActionDialog(tk.Toplevel):
         self.grab_set()
         messagebox.showinfo("Captura", f"Imagen guardada en:\n{path}", parent=self)
 
+    def _do_capture_reference_image(self):
+        self.grab_release()
+        self.withdraw()
+        try:
+            box = select_region_interactively(self)
+        finally:
+            self.deiconify()
+            self.grab_set()
+        if not box:
+            return
+        x, y, w, h = box
+        if not w or not h:
+            messagebox.showerror(
+                "Capturar imagen", "Selecciona un area valida.", parent=self
+            )
+            return
+
+        images_dir = image_search.ensure_images_dir()
+        default_name = f"referencia_{int(time.time())}.png"
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Guardar imagen de referencia como",
+            defaultextension=".png",
+            initialdir=images_dir,
+            initialfile=default_name,
+            filetypes=IMAGE_FILETYPES,
+        )
+        if not path:
+            return
+        try:
+            image_search.save_capture(path, region=(x, y, w, h))
+        except Exception as exc:  # noqa: BLE001 - se muestra el error al usuario
+            messagebox.showerror("Capturar imagen", str(exc), parent=self)
+            return
+        if "image_path" in self._field_vars:
+            self._field_vars["image_path"][1].set(path)
+        messagebox.showinfo(
+            "Capturar imagen", f"Imagen de referencia guardada en:\n{path}", parent=self
+        )
+
+    def _do_capture_click_position(self):
+        self.grab_release()
+        self.withdraw()
+        try:
+            point = select_point_interactively(self)
+        finally:
+            self.deiconify()
+            self.grab_set()
+        if not point:
+            return
+        x, y = point
+        for name, value in (("x", x), ("y", y)):
+            if name in self._field_vars:
+                self._field_vars[name][1].set(str(int(value)))
+
     def _do_test_find(self):
         path = self._field_vars.get("image_path", (None, tk.StringVar()))[1].get().strip()
         if not path:
@@ -270,6 +344,40 @@ class ActionDialog(tk.Toplevel):
             )
         else:
             messagebox.showinfo("Buscar imagen", "Imagen no encontrada en pantalla.", parent=self)
+
+    def _do_test_find_ocr(self):
+        text = self._field_vars.get("text", (None, tk.StringVar()))[1].get().strip()
+        if not text:
+            messagebox.showerror(
+                "Buscar texto (OCR)", "Primero indica el texto a buscar.", parent=self
+            )
+            return
+        lang = self._field_vars.get("lang", (None, tk.StringVar(value="eng")))[1].get().strip()
+        case_sensitive = bool(
+            self._field_vars.get("case_sensitive", (None, tk.BooleanVar(value=False)))[1].get()
+        )
+        region = self._collect_region()
+        self.grab_release()
+        self.withdraw()
+        try:
+            location = image_search.locate_text(
+                text, region=region, lang=lang or "eng", case_sensitive=case_sensitive
+            )
+        except Exception as exc:  # noqa: BLE001 - se muestra el error al usuario
+            self.deiconify()
+            self.grab_set()
+            messagebox.showerror("Buscar texto (OCR)", str(exc), parent=self)
+            return
+        self.deiconify()
+        self.grab_set()
+        if location:
+            messagebox.showinfo(
+                "Buscar texto (OCR)", f"Texto encontrado en {location}.", parent=self
+            )
+        else:
+            messagebox.showinfo(
+                "Buscar texto (OCR)", "Texto no encontrado en pantalla.", parent=self
+            )
 
     def _choose_path(self, var, filetypes=None, title="Elegir programa o archivo"):
         kwargs = {"parent": self, "title": title}
@@ -435,6 +543,65 @@ def select_region_interactively(parent):
     overlay.focus_force()
     overlay.wait_window()
     return result.get("box")
+
+
+def select_point_interactively(parent):
+    """Abre una ventana semitransparente de pantalla completa donde el
+    usuario mueve el mouse hasta la posicion deseada; una cruz roja sigue
+    al cursor para identificar donde se hara el clic. Al pulsar la barra
+    espaciadora se captura esa posicion.
+
+    Devuelve (x, y) en coordenadas absolutas de pantalla, o None si se
+    cancela (Esc)."""
+    result = {}
+    overlay = tk.Toplevel(parent)
+    overlay.attributes("-fullscreen", True)
+    overlay.attributes("-alpha", 0.3)
+    overlay.attributes("-topmost", True)
+    overlay.configure(bg="gray20")
+    overlay.config(cursor="cross")
+
+    canvas = tk.Canvas(overlay, bg="gray20", highlightthickness=0)
+    canvas.pack(fill="both", expand=True)
+    canvas.create_text(
+        10,
+        10,
+        anchor="nw",
+        fill="white",
+        font=("Segoe UI", 11),
+        text="Mueve el mouse a la posicion deseada y pulsa Espacio para capturar."
+        " Esc para cancelar.",
+    )
+
+    cross = {"h": None, "v": None}
+    half = 14
+
+    def draw_cross(x, y):
+        if cross["h"] is not None:
+            canvas.delete(cross["h"])
+        if cross["v"] is not None:
+            canvas.delete(cross["v"])
+        cross["h"] = canvas.create_line(x - half, y, x + half, y, fill="red", width=2)
+        cross["v"] = canvas.create_line(x, y - half, x, y + half, fill="red", width=2)
+
+    def on_motion(event):
+        draw_cross(event.x, event.y)
+
+    def on_space(_event):
+        result["point"] = (overlay.winfo_pointerx(), overlay.winfo_pointery())
+        overlay.destroy()
+
+    def on_escape(_event):
+        result["point"] = None
+        overlay.destroy()
+
+    canvas.bind("<Motion>", on_motion)
+    overlay.bind("<space>", on_space)
+    overlay.bind("<Escape>", on_escape)
+    overlay.grab_set()
+    overlay.focus_force()
+    overlay.wait_window()
+    return result.get("point")
 
 
 def ask_action(parent, event=None):

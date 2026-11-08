@@ -100,6 +100,35 @@ ACTION_TYPES = {
             ),
         ],
     },
+    "find_ocr": {
+        "label": "Buscar texto en pantalla (OCR)",
+        "fields": [
+            ("text", "Texto a buscar", "text", "", None),
+            ("case_sensitive", "Distinguir mayusculas/minusculas", "bool", False, None),
+            ("lang", "Idioma del OCR (codigo Tesseract)", "text", "eng", None),
+            ("x", "Region X (0 = pantalla completa)", "int", 0, None),
+            ("y", "Region Y", "int", 0, None),
+            ("width", "Ancho de la region (0 = pantalla completa)", "int", 0, None),
+            ("height", "Alto de la region", "int", 0, None),
+            (
+                "found_action",
+                "Si se encuentra: accion de mouse",
+                "choice",
+                "click",
+                ["click", "double_click", "right_click", "move", "none"],
+            ),
+            ("offset_x", "Desplazamiento X desde el centro encontrado", "int", 0, None),
+            ("offset_y", "Desplazamiento Y desde el centro encontrado", "int", 0, None),
+            ("not_found_wait", "Si no se encuentra: esperar (s)", "float", 1.0, None),
+            (
+                "not_found_goto",
+                "Si no se encuentra: ir al paso # (0 = continuar)",
+                "int",
+                0,
+                None,
+            ),
+        ],
+    },
     "key_down": {
         "label": "Tecla abajo (mantener)",
         "fields": [
@@ -159,6 +188,7 @@ ACTION_ORDER = [
     "scroll",
     "capture_image",
     "find_image",
+    "find_ocr",
     "key_press",
     "key_down",
     "key_up",
@@ -244,6 +274,21 @@ def describe(event):
         destino = f"ir al paso {goto}" if goto else "continuar"
         return (
             f"Buscar '{event.get('image_path', '')}' (conf={event.get('confidence', 0.8)}): "
+            f"si se encuentra -> {etiqueta_accion}; "
+            f"si no -> esperar {event.get('not_found_wait', 0)}s y {destino}"
+        )
+    if kind == "find_ocr":
+        etiqueta_accion = {
+            "click": "clic",
+            "double_click": "doble clic",
+            "right_click": "clic derecho",
+            "move": "mover el mouse",
+            "none": "nada",
+        }.get(event.get("found_action", "click"), event.get("found_action", "click"))
+        goto = event.get("not_found_goto", 0)
+        destino = f"ir al paso {goto}" if goto else "continuar"
+        return (
+            f"Buscar texto (OCR) {event.get('text', '')!r}: "
             f"si se encuentra -> {etiqueta_accion}; "
             f"si no -> esperar {event.get('not_found_wait', 0)}s y {destino}"
         )

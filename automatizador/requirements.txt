@@ -4,3 +4,7 @@ Pillow>=9.0
 # opcional: habilita la busqueda de imagen "por confianza" (coincidencia
 # aproximada) en vez de una comparacion exacta de pixeles.
 opencv-python>=4.5
+# necesaria para "Buscar texto en pantalla (OCR)". Ademas del paquete de
+# Python, instala el motor Tesseract OCR en el sistema:
+# https://github.com/tesseract-ocr/tesseract
+pytesseract>=0.3.10

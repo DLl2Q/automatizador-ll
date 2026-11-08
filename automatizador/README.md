@@ -8,6 +8,10 @@ accion, igual que en el programa original.
 
 ## Que incluye
 
+- Interfaz grafica con tema moderno (colores, iconos en los botones, filas
+  alternadas en la lista de acciones, barra de progreso de reproduccion,
+  buscador para filtrar las macros guardadas y menu superior con todas las
+  acciones disponibles).
 - Grabacion de movimientos de mouse, clics (izq/der/medio), rueda del mouse
   y pulsaciones de teclado, con el tiempo de espera real entre cada una.
 - **Panel de acciones**: lista completa de la macro (grabada o manual) con
@@ -43,6 +47,16 @@ accion, igual que en el programa original.
       indica un numero de paso mayor a 0, salta a ese paso de la lista de
       acciones (permite reintentar el mismo bloque hasta encontrar la
       imagen).
+  - **Buscar texto en pantalla (OCR)** (busca un texto, por reconocimiento
+    optico de caracteres, en toda la pantalla o en una region; con opcion
+    de distinguir mayusculas/minusculas e idioma del OCR). Tiene las
+    mismas opciones que **Buscar imagen en pantalla**:
+    - **Si se encuentra**: ejecuta una accion de mouse (clic, doble clic,
+      clic derecho o solo mover el mouse) en el punto encontrado, con un
+      desplazamiento (offset) opcional.
+    - **Si no se encuentra**: espera una cantidad de segundos y, si se
+      indica un numero de paso mayor a 0, salta a ese paso de la lista de
+      acciones.
 - Reproduccion fiel a los tiempos grabados o definidos a mano, con control de:
   - **Velocidad** (0.1x a 10x).
   - **Repeticiones** (un numero fijo, o 0 = bucle infinito).
@@ -67,6 +81,12 @@ accion, igual que en el programa original.
   `requirements.txt`). `opencv-python` es opcional y habilita la busqueda
   "por confianza" (coincidencia aproximada); sin ella, la busqueda de imagen
   es por coincidencia exacta de pixeles.
+- Para **Buscar texto en pantalla (OCR)**: libreria
+  [`pytesseract`](https://pypi.org/project/pytesseract/) (incluida en
+  `requirements.txt`) **y** el motor
+  [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) instalado en
+  el sistema (no es un paquete de Python; hay que instalarlo aparte, por
+  ejemplo con su instalador para Windows).
 
 ## Instalacion y ejecucion
 
@@ -123,7 +143,7 @@ automatizador/
     actions.py                Catalogo de tipos de accion y su descripcion en pantalla
     action_dialog.py          Dialogo para agregar/editar una accion a mano
     keys.py                   Utilidades para serializar y mostrar teclas
-    image_search.py            Captura de pantalla y busqueda de imagenes
+    image_search.py            Captura de pantalla y busqueda de imagenes/texto (OCR)
     storage.py                 Guardar/cargar/eliminar macros en JSON (con migracion)
   macros/                      Macros guardadas (.json)
   images/                       Capturas e imagenes de referencia (opcional)
@@ -138,5 +158,6 @@ automatizador/
   correspondientes.
 - No incluye variables ni condicionales genericos (funciones avanzadas de
   versiones de pago del Macro Recorder original); si incluye busqueda de
-  imagenes en pantalla con una rama "si se encuentra / si no se encuentra"
-  (ver **Buscar imagen en pantalla** mas arriba).
+  imagenes y de texto (OCR) en pantalla con una rama "si se encuentra / si
+  no se encuentra" (ver **Buscar imagen en pantalla** y **Buscar texto en
+  pantalla (OCR)** mas arriba).

@@ -1,9 +1,13 @@
-"""Captura de pantalla y busqueda de imagenes en pantalla.
+"""Captura de pantalla y busqueda de imagenes/texto en pantalla.
 
 Usa 'pyautogui' (y Pillow) para tomar capturas y 'pyautogui.locateOnScreen'
 para buscar una imagen de referencia en la pantalla. El parametro de
 confianza ("confidence") solo funciona si ademas esta instalado
 'opencv-python'; si no lo esta, se hace una busqueda exacta de pixeles.
+
+Tambien incluye busqueda de texto en pantalla por OCR usando 'pytesseract',
+que a su vez necesita el motor Tesseract OCR instalado en el sistema
+(https://github.com/tesseract-ocr/tesseract).
 """
 
 import os
@@ -27,6 +31,20 @@ def _import_pyautogui():
             "py -3 -m pip install -r requirements.txt"
         ) from exc
     return pyautogui
+
+
+def _import_pytesseract():
+    try:
+        import pytesseract
+    except ImportError as exc:
+        raise RuntimeError(
+            "Esta funcion necesita la libreria 'pytesseract'.\n"
+            "Instalala con:\n"
+            "py -3 -m pip install -r requirements.txt\n"
+            "Ademas necesitas tener instalado el motor Tesseract OCR:\n"
+            "https://github.com/tesseract-ocr/tesseract"
+        ) from exc
+    return pytesseract
 
 
 def _normalize_region(region):
@@ -92,3 +110,53 @@ def locate_image(path, region=None, confidence=0.8):
         return None
     center = pyautogui.center(box)
     return (center.x, center.y)
+
+
+def locate_text(text, region=None, lang="eng", case_sensitive=False):
+    """Busca 'text' en la pantalla (o en 'region') usando OCR.
+
+    Soporta busquedas de varias palabras (compara secuencias consecutivas
+    de palabras detectadas). Devuelve (x, y) con el centro del texto
+    encontrado (coordenadas absolutas de pantalla), o None si no se
+    encontro."""
+    needle = (text or "").strip()
+    if not needle:
+        return None
+
+    pytesseract = _import_pytesseract()
+    normalized = _normalize_region(region)
+    origin_x, origin_y = (normalized[0], normalized[1]) if normalized else (0, 0)
+
+    image = grab_region(region)
+    data = pytesseract.image_to_data(
+        image, lang=lang or "eng", output_type=pytesseract.Output.DICT
+    )
+
+    words = needle.split()
+    needle_cmp = words if case_sensitive else [w.lower() for w in words]
+    count = len(needle_cmp)
+
+    raw_words = data.get("text", [])
+    total = len(raw_words)
+    for start in range(total - count + 1):
+        chunk = raw_words[start : start + count]
+        if any(not w.strip() for w in chunk):
+            continue
+        chunk_cmp = chunk if case_sensitive else [w.lower() for w in chunk]
+        if chunk_cmp != needle_cmp:
+            continue
+        lefts = data["left"][start : start + count]
+        tops = data["top"][start : start + count]
+        rights = [
+            data["left"][i] + data["width"][i] for i in range(start, start + count)
+        ]
+        bottoms = [
+            data["top"][i] + data["height"][i] for i in range(start, start + count)
+        ]
+        x0, y0 = min(lefts), min(tops)
+        x1, y1 = max(rights), max(bottoms)
+        center_x = origin_x + (x0 + x1) // 2
+        center_y = origin_y + (y0 + y1) // 2
+        return (center_x, center_y)
+    return None
+

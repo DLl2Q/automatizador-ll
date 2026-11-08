@@ -124,6 +124,8 @@ class Player:
             self._do_capture_image(event)
         elif kind == "find_image":
             return self._do_find_image(event, speed)
+        elif kind == "find_ocr":
+            return self._do_find_ocr(event, speed)
         return None
 
     def _do_click(self, event):
@@ -218,7 +220,26 @@ class Player:
                 )
             except Exception:  # noqa: BLE001 - dependencia faltante u otro error: no encontrada
                 location = None
+        return self._resolve_found_location(event, location, speed)
 
+    def _do_find_ocr(self, event, speed):
+        """Busca un texto en pantalla por OCR y aplica las mismas opciones
+        de "si se encuentra / si no se encuentra" que _do_find_image."""
+        text = event.get("text", "")
+        location = None
+        if text:
+            try:
+                location = image_search.locate_text(
+                    text,
+                    region=self._region_of(event),
+                    lang=event.get("lang", "eng"),
+                    case_sensitive=event.get("case_sensitive", False),
+                )
+            except Exception:  # noqa: BLE001 - dependencia faltante u otro error: no encontrada
+                location = None
+        return self._resolve_found_location(event, location, speed)
+
+    def _resolve_found_location(self, event, location, speed):
         if location is not None:
             x = location[0] + event.get("offset_x", 0)
             y = location[1] + event.get("offset_y", 0)
