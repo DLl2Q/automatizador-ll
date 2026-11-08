@@ -1,0 +1,128 @@
+"""Grabacion de eventos globales de mouse y teclado."""
+
+import threading
+import time
+
+from pynput import keyboard, mouse
+
+# Teclas reservadas como hotkeys de la aplicacion: nunca se graban.
+RESERVED_KEYS = {keyboard.Key.f9, keyboard.Key.f10, keyboard.Key.esc}
+
+# Tiempo minimo (segundos) entre dos eventos de movimiento consecutivos.
+MOVE_SAMPLE_INTERVAL = 0.02
+
+
+def key_to_str(key):
+    """Serializa una tecla de pynput a texto para poder guardarla en JSON."""
+    if isinstance(key, keyboard.KeyCode):
+        if key.char is not None:
+            return f"char:{key.char}"
+        return f"vk:{key.vk}"
+    return f"special:{key.name}"
+
+
+def str_to_key(value):
+    """Reconstruye una tecla de pynput a partir del texto generado por key_to_str."""
+    if value.startswith("char:"):
+        return keyboard.KeyCode.from_char(value[5:])
+    if value.startswith("vk:"):
+        return keyboard.KeyCode.from_vk(int(value[3:]))
+    if value.startswith("special:"):
+        return getattr(keyboard.Key, value[8:])
+    raise ValueError(f"Tecla desconocida: {value!r}")
+
+
+class Recorder:
+    """Graba movimientos, clics, scroll y pulsaciones de teclado con su tiempo relativo."""
+
+    def __init__(self, on_event=None, record_mouse_move=True):
+        self.events = []
+        self.record_mouse_move = record_mouse_move
+        self.on_event = on_event
+
+        self._start_time = None
+        self._last_move_time = 0.0
+        self._lock = threading.Lock()
+        self._recording = False
+        self._mouse_listener = None
+        self._keyboard_listener = None
+
+    @property
+    def is_recording(self):
+        return self._recording
+
+    def start(self):
+        self.events = []
+        self._start_time = time.perf_counter()
+        self._last_move_time = -1.0
+        self._recording = True
+
+        self._mouse_listener = mouse.Listener(
+            on_move=self._on_move,
+            on_click=self._on_click,
+            on_scroll=self._on_scroll,
+        )
+        self._keyboard_listener = keyboard.Listener(
+            on_press=self._on_press,
+            on_release=self._on_release,
+        )
+        self._mouse_listener.start()
+        self._keyboard_listener.start()
+
+    def stop(self):
+        if not self._recording:
+            return self.events
+        self._recording = False
+        if self._mouse_listener is not None:
+            self._mouse_listener.stop()
+            self._mouse_listener = None
+        if self._keyboard_listener is not None:
+            self._keyboard_listener.stop()
+            self._keyboard_listener = None
+        return self.events
+
+    def _now(self):
+        return time.perf_counter() - self._start_time
+
+    def _add(self, event):
+        with self._lock:
+            self.events.append(event)
+            total = len(self.events)
+        if self.on_event:
+            self.on_event(total)
+
+    def _on_move(self, x, y):
+        if not self.record_mouse_move:
+            return
+        t = self._now()
+        if t - self._last_move_time < MOVE_SAMPLE_INTERVAL:
+            return
+        self._last_move_time = t
+        self._add({"type": "move", "time": t, "x": x, "y": y})
+
+    def _on_click(self, x, y, button, pressed):
+        self._add(
+            {
+                "type": "click",
+                "time": self._now(),
+                "x": x,
+                "y": y,
+                "button": button.name,
+                "pressed": pressed,
+            }
+        )
+
+    def _on_scroll(self, x, y, dx, dy):
+        self._add(
+            {"type": "scroll", "time": self._now(), "x": x, "y": y, "dx": dx, "dy": dy}
+        )
+
+    def _on_press(self, key):
+        if key in RESERVED_KEYS:
+            return
+        self._add({"type": "key_down", "time": self._now(), "key": key_to_str(key)})
+
+    def _on_release(self, key):
+        if key in RESERVED_KEYS:
+            return
+        self._add({"type": "key_up", "time": self._now(), "key": key_to_str(key)})
