@@ -1,0 +1,6 @@
+*.png
+*.bmp
+*.jpg
+*.jpeg
+*.gif
+!.gitkeep

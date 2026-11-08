@@ -1,1 +1,6 @@
 pynput>=1.7
+pyautogui>=0.9.54
+Pillow>=9.0
+# opcional: habilita la busqueda de imagen "por confianza" (coincidencia
+# aproximada) en vez de una comparacion exacta de pixeles.
+opencv-python>=4.5

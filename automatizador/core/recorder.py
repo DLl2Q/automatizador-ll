@@ -1,35 +1,24 @@
-"""Grabacion de eventos globales de mouse y teclado."""
+"""Grabacion de eventos globales de mouse y teclado.
+
+Cada evento grabado guarda un "delay": el tiempo (en segundos) que hay que
+esperar antes de ejecutarlo, relativo al evento anterior (o al inicio de la
+grabacion para el primero). Este es el mismo formato que usan las acciones
+agregadas manualmente desde el panel de acciones, asi que una macro grabada
+se puede editar a mano despues sin tener que recalcular nada.
+"""
 
 import threading
 import time
 
 from pynput import keyboard, mouse
 
+from .keys import key_to_str
+
 # Teclas reservadas como hotkeys de la aplicacion: nunca se graban.
 RESERVED_KEYS = {keyboard.Key.f9, keyboard.Key.f10, keyboard.Key.esc}
 
 # Tiempo minimo (segundos) entre dos eventos de movimiento consecutivos.
 MOVE_SAMPLE_INTERVAL = 0.02
-
-
-def key_to_str(key):
-    """Serializa una tecla de pynput a texto para poder guardarla en JSON."""
-    if isinstance(key, keyboard.KeyCode):
-        if key.char is not None:
-            return f"char:{key.char}"
-        return f"vk:{key.vk}"
-    return f"special:{key.name}"
-
-
-def str_to_key(value):
-    """Reconstruye una tecla de pynput a partir del texto generado por key_to_str."""
-    if value.startswith("char:"):
-        return keyboard.KeyCode.from_char(value[5:])
-    if value.startswith("vk:"):
-        return keyboard.KeyCode.from_vk(int(value[3:]))
-    if value.startswith("special:"):
-        return getattr(keyboard.Key, value[8:])
-    raise ValueError(f"Tecla desconocida: {value!r}")
 
 
 class Recorder:
@@ -40,7 +29,7 @@ class Recorder:
         self.record_mouse_move = record_mouse_move
         self.on_event = on_event
 
-        self._start_time = None
+        self._last_time = None
         self._last_move_time = 0.0
         self._lock = threading.Lock()
         self._recording = False
@@ -53,7 +42,7 @@ class Recorder:
 
     def start(self):
         self.events = []
-        self._start_time = time.perf_counter()
+        self._last_time = time.perf_counter()
         self._last_move_time = -1.0
         self._recording = True
 
@@ -81,11 +70,15 @@ class Recorder:
             self._keyboard_listener = None
         return self.events
 
-    def _now(self):
-        return time.perf_counter() - self._start_time
+    def _next_delay(self):
+        now = time.perf_counter()
+        delay = max(now - self._last_time, 0.0)
+        self._last_time = now
+        return delay
 
     def _add(self, event):
         with self._lock:
+            event["delay"] = self._next_delay()
             self.events.append(event)
             total = len(self.events)
         if self.on_event:
@@ -94,35 +87,33 @@ class Recorder:
     def _on_move(self, x, y):
         if not self.record_mouse_move:
             return
-        t = self._now()
-        if t - self._last_move_time < MOVE_SAMPLE_INTERVAL:
+        now = time.perf_counter()
+        if now - self._last_move_time < MOVE_SAMPLE_INTERVAL:
             return
-        self._last_move_time = t
-        self._add({"type": "move", "time": t, "x": x, "y": y})
+        self._last_move_time = now
+        self._add({"type": "move", "x": x, "y": y})
 
     def _on_click(self, x, y, button, pressed):
         self._add(
             {
                 "type": "click",
-                "time": self._now(),
                 "x": x,
                 "y": y,
                 "button": button.name,
-                "pressed": pressed,
+                "action": "down" if pressed else "up",
+                "double": False,
             }
         )
 
     def _on_scroll(self, x, y, dx, dy):
-        self._add(
-            {"type": "scroll", "time": self._now(), "x": x, "y": y, "dx": dx, "dy": dy}
-        )
+        self._add({"type": "scroll", "x": x, "y": y, "dx": dx, "dy": dy})
 
     def _on_press(self, key):
         if key in RESERVED_KEYS:
             return
-        self._add({"type": "key_down", "time": self._now(), "key": key_to_str(key)})
+        self._add({"type": "key_down", "key": key_to_str(key)})
 
     def _on_release(self, key):
         if key in RESERVED_KEYS:
             return
-        self._add({"type": "key_up", "time": self._now(), "key": key_to_str(key)})
+        self._add({"type": "key_up", "key": key_to_str(key)})

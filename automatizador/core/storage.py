@@ -38,9 +38,29 @@ def save_macro(name, events):
     return path
 
 
+def _migrate_legacy_events(events):
+    """Convierte macros antiguas (con "time" absoluto y "pressed" booleano)
+    al formato actual, basado en "delay" relativo por accion."""
+    migrated = []
+    last_time = 0.0
+    for event in events:
+        new_event = dict(event)
+        if "time" in new_event:
+            new_event["delay"] = max(new_event.pop("time") - last_time, 0.0)
+            last_time += new_event["delay"]
+        else:
+            new_event.setdefault("delay", 0.0)
+        if new_event.get("type") == "click" and "pressed" in new_event:
+            new_event["action"] = "down" if new_event.pop("pressed") else "up"
+            new_event.setdefault("double", False)
+        migrated.append(new_event)
+    return migrated
+
+
 def load_macro(name):
     with open(macro_path(name), "r", encoding="utf-8") as fh:
-        return json.load(fh)
+        events = json.load(fh)
+    return _migrate_legacy_events(events)
 
 
 def delete_macro(name):
