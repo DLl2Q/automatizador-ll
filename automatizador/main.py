@@ -824,7 +824,29 @@ def run_macro_headless(name, speed=1.0, repeat=1):
     return 0
 
 
+def _enable_dpi_awareness():
+    """En Windows, si el proceso no se marca como 'DPI aware', el sistema
+    virtualiza la resolucion de pantalla que ve la app (la reduce segun el
+    % de escalado configurado). Eso hace que las capturas de pantalla
+    (PyAutoGUI/Pillow) y la seleccion de region (Tkinter) solo cubran una
+    fraccion de la pantalla real, pegada a la esquina superior izquierda.
+    Activar DPI awareness antes de crear cualquier ventana soluciona ambos
+    casos a la vez."""
+    if os.name != "nt":
+        return
+    import ctypes
+
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-Monitor-DPI-Aware
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except (AttributeError, OSError):
+            pass
+
+
 def main():
+    _enable_dpi_awareness()
     parser = argparse.ArgumentParser(description=APP_TITLE)
     parser.add_argument(
         "--background",
