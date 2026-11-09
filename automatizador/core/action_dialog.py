@@ -1,5 +1,6 @@
 """Dialogo para agregar o editar manualmente una accion del panel de acciones."""
 
+import os
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -13,6 +14,20 @@ IMAGE_FILETYPES = [
     ("Imagenes", "*.png *.bmp *.jpg *.jpeg *.gif"),
     ("Todos los archivos", "*.*"),
 ]
+
+# Tamano maximo (ancho, alto) de la vista previa de imagen en el dialogo de
+# acciones; se mantiene pequena para no agrandar la ventana.
+MAX_PREVIEW_SIZE = (160, 110)
+
+
+def _import_pil():
+    """Importa Pillow de forma perezosa; devuelve (None, None) si no esta
+    disponible, para que la vista previa simplemente se omita."""
+    try:
+        from PIL import Image, ImageTk
+    except ImportError:
+        return None, None
+    return Image, ImageTk
 
 
 class ActionDialog(tk.Toplevel):
@@ -30,6 +45,8 @@ class ActionDialog(tk.Toplevel):
         self._capture_var = None
         self._variant_type = None
         self._variant_label_to_member = {}
+        self._preview_label = None
+        self._preview_photo = None
 
         raw_initial_type = (event or {}).get("type", actions.ACTION_ORDER[0])
         initial_type = actions.group_for_member(raw_initial_type) or raw_initial_type
@@ -55,8 +72,14 @@ class ActionDialog(tk.Toplevel):
 
         self._label_to_type = {actions.label_for(t): t for t in actions.ACTION_ORDER}
 
+        ttk.Label(top, text="Comentario:").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self.comment_var = tk.StringVar(value=(event or {}).get("comment", ""))
+        ttk.Entry(top, textvariable=self.comment_var, width=42).grid(
+            row=2, column=1, columnspan=2, sticky="w", pady=(6, 0)
+        )
+
         buttons = ttk.Frame(top)
-        buttons.grid(row=2, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        buttons.grid(row=3, column=0, columnspan=3, sticky="e", pady=(12, 0))
         ttk.Button(buttons, text="Cancelar", command=self._on_cancel).pack(side="right")
         ttk.Button(buttons, text="Aceptar", command=self._on_accept).pack(
             side="right", padx=(0, 8)
@@ -94,6 +117,8 @@ class ActionDialog(tk.Toplevel):
         for child in self.fields_frame.winfo_children():
             child.destroy()
         self._field_vars = {}
+        self._preview_label = None
+        self._preview_photo = None
 
         action_type = self._current_type()
         is_group = actions.is_group(action_type)
@@ -241,6 +266,7 @@ class ActionDialog(tk.Toplevel):
                 frame, text="Capturar ahora", command=self._do_capture_now
             ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 3))
             row += 1
+            row = self._attach_image_preview(row, self._field_vars["save_path"][1])
         elif action_type == "find_image":
             ttk.Button(
                 frame,
@@ -252,6 +278,7 @@ class ActionDialog(tk.Toplevel):
                 frame, text="Probar busqueda", command=self._do_test_find
             ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 3))
             row += 1
+            row = self._attach_image_preview(row, self._field_vars["image_path"][1])
         elif action_type == "find_ocr":
             ttk.Button(
                 frame, text="Probar busqueda", command=self._do_test_find_ocr
@@ -265,6 +292,41 @@ class ActionDialog(tk.Toplevel):
             ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(10, 3))
             row += 1
         return row
+
+    def _attach_image_preview(self, row, path_var):
+        """Agrega una vista previa pequena de la imagen indicada por
+        'path_var' (StringVar), que se actualiza automaticamente cada vez
+        que cambia su valor. Si Pillow no esta instalado, o la ruta no es
+        una imagen valida, no se muestra nada."""
+        preview_label = tk.Label(self.fields_frame)
+        preview_label.grid(row=row, column=0, columnspan=3, sticky="w", pady=(2, 8))
+        self._preview_label = preview_label
+
+        def _update(*_args):
+            self._set_preview_image(path_var.get())
+
+        path_var.trace_add("write", _update)
+        _update()
+        return row + 1
+
+    def _set_preview_image(self, path):
+        if self._preview_label is None or not self._preview_label.winfo_exists():
+            return
+        Image, ImageTk = _import_pil()
+        if not Image or not path or not os.path.isfile(path):
+            self._preview_label.config(image="", text="")
+            self._preview_photo = None
+            return
+        try:
+            img = Image.open(path)
+            img.thumbnail(MAX_PREVIEW_SIZE)
+            photo = ImageTk.PhotoImage(img)
+        except Exception:  # noqa: BLE001 - imagen invalida o no soportada
+            self._preview_label.config(image="", text="(vista previa no disponible)")
+            self._preview_photo = None
+            return
+        self._preview_photo = photo  # se guarda la referencia para que no se libere
+        self._preview_label.config(image=photo, text="")
 
     def _collect_region(self):
         def _get(name):
@@ -309,6 +371,7 @@ class ActionDialog(tk.Toplevel):
             return
         self.deiconify()
         self.grab_set()
+        self._set_preview_image(path)
         messagebox.showinfo("Captura", f"Imagen guardada en:\n{path}", parent=self)
 
     def _do_capture_reference_image(self):
@@ -381,17 +444,21 @@ class ActionDialog(tk.Toplevel):
         self.grab_release()
         self.withdraw()
         try:
-            location = image_search.locate_image(path, region=region, confidence=confidence)
+            box = image_search.locate_image_box(path, region=region, confidence=confidence)
         except Exception as exc:  # noqa: BLE001 - se muestra el error al usuario
             self.deiconify()
             self.grab_set()
             messagebox.showerror("Buscar imagen", str(exc), parent=self)
             return
+        if box:
+            flash_region(self, box)
         self.deiconify()
         self.grab_set()
-        if location:
+        if box:
+            left, top, width, height = box
+            center = (left + width // 2, top + height // 2)
             messagebox.showinfo(
-                "Buscar imagen", f"Imagen encontrada en {location}.", parent=self
+                "Buscar imagen", f"Imagen encontrada en {center}.", parent=self
             )
         else:
             messagebox.showinfo("Buscar imagen", "Imagen no encontrada en pantalla.", parent=self)
@@ -411,7 +478,7 @@ class ActionDialog(tk.Toplevel):
         self.grab_release()
         self.withdraw()
         try:
-            location = image_search.locate_text(
+            box = image_search.locate_text_box(
                 text, region=region, lang=lang or "eng", case_sensitive=case_sensitive
             )
         except Exception as exc:  # noqa: BLE001 - se muestra el error al usuario
@@ -419,11 +486,15 @@ class ActionDialog(tk.Toplevel):
             self.grab_set()
             messagebox.showerror("Buscar texto (OCR)", str(exc), parent=self)
             return
+        if box:
+            flash_region(self, box)
         self.deiconify()
         self.grab_set()
-        if location:
+        if box:
+            left, top, width, height = box
+            center = (left + width // 2, top + height // 2)
             messagebox.showinfo(
-                "Buscar texto (OCR)", f"Texto encontrado en {location}.", parent=self
+                "Buscar texto (OCR)", f"Texto encontrado en {center}.", parent=self
             )
         else:
             messagebox.showinfo(
@@ -474,7 +545,7 @@ class ActionDialog(tk.Toplevel):
         except ValueError as exc:
             raise ValueError("El retraso/duracion debe ser un numero >= 0.") from exc
 
-        event = {"type": member_type, "delay": delay}
+        event = {"type": member_type, "delay": delay, "comment": self.comment_var.get().strip()}
         for name, label, kind, _default, _choices in actions.fields_for(member_type):
             kind_stored, widget_or_var = self._field_vars[name]
             if kind_stored == "textarea":
@@ -653,6 +724,32 @@ def select_point_interactively(parent):
     overlay.focus_force()
     overlay.wait_window()
     return result.get("point")
+
+
+def flash_region(parent, box, duration_ms=1500):
+    """Dibuja un rectángulo de resaltado alrededor de una región (left, top, width, height)
+    en una ventana transparente que se auto-destruye tras duration_ms."""
+    left, top, width, height = box
+    overlay = tk.Toplevel(parent)
+    overlay.overrideredirect(True)
+    overlay.attributes("-topmost", True)
+    transparent_key = "magenta"
+    overlay.configure(bg=transparent_key)
+    try:
+        overlay.attributes("-transparentcolor", transparent_key)
+    except tk.TclError:
+        overlay.attributes("-alpha", 0.7)
+    overlay.geometry(f"{overlay.winfo_screenwidth()}x{overlay.winfo_screenheight()}+0+0")
+    
+    canvas = tk.Canvas(overlay, bg=transparent_key, highlightthickness=0)
+    canvas.pack(fill="both", expand=True)
+    # Dibujar rectángulo amarillo grueso alrededor del área encontrada
+    canvas.create_rectangle(left, top, left + width, top + height, 
+                            outline="yellow", width=3)
+    canvas.create_rectangle(left + 1, top + 1, left + width - 1, top + height - 1,
+                            outline="cyan", width=1)
+    
+    overlay.after(duration_ms, overlay.destroy)
 
 
 def ask_action(parent, event=None):

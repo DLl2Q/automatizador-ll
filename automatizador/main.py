@@ -329,7 +329,7 @@ class App:
         tree_frame = ttk.Frame(frame, style="Panel.TFrame")
         tree_frame.pack(fill="both", expand=True, padx=8, pady=8)
 
-        columns = ("idx", "delay", "tipo", "detalle")
+        columns = ("idx", "delay", "tipo", "detalle", "comentarios")
         self.tree = ttk.Treeview(
             tree_frame, columns=columns, show="headings", selectmode="browse"
         )
@@ -337,10 +337,12 @@ class App:
         self.tree.heading("delay", text="Retraso (s)")
         self.tree.heading("tipo", text="Accion")
         self.tree.heading("detalle", text="Detalle")
+        self.tree.heading("comentarios", text="Comentarios")
         self.tree.column("idx", width=32, anchor="center", stretch=False)
         self.tree.column("delay", width=80, anchor="center", stretch=False)
         self.tree.column("tipo", width=170, stretch=False)
-        self.tree.column("detalle", width=320)
+        self.tree.column("detalle", width=250)
+        self.tree.column("comentarios", width=150, anchor="w", stretch=False)
         self.tree.tag_configure("oddrow", background=COLOR_ROW_ODD)
         self.tree.tag_configure("evenrow", background=COLOR_ROW_EVEN)
         self.tree.pack(side="left", fill="both", expand=True)
@@ -544,6 +546,7 @@ class App:
                     f"{event.get('delay', 0.0):.3f}",
                     actions.label_for(event.get("type")),
                     actions.describe(event),
+                    event.get("comment", ""),
                 ),
                 tags=(tag,),
             )

@@ -12,7 +12,25 @@ pausa, ejecutar programa, abrir URL, mostrar mensaje) y completando sus
 parametros, sin necesidad de grabarla.
 """
 
+import os
+
+from . import image_search
 from . import keys
+
+
+def _relative_path(path):
+    """Devuelve 'path' relativo a la carpeta del proyecto cuando es posible,
+    para no mostrar rutas absolutas largas en el panel de acciones."""
+    if not path:
+        return path
+    try:
+        rel = os.path.relpath(path, image_search.BASE_DIR)
+    except ValueError:
+        return path
+    if rel.startswith(".."):
+        return path
+    return rel
+
 
 # Tipos de campo soportados por el dialogo de edicion (core/action_dialog.py):
 #   "int"      -> numero entero
@@ -319,7 +337,7 @@ def describe(event):
         width, height = event.get("width", 0), event.get("height", 0)
         region = f"region ({event.get('x', 0)}, {event.get('y', 0)}) {width}x{height}"
         zona = region if width and height else "pantalla completa"
-        return f"Capturar {zona} -> {event.get('save_path', '')}"
+        return f"Capturar {zona} -> {_relative_path(event.get('save_path', ''))}"
     if kind == "find_image":
         etiqueta_accion = {
             "click": "clic",
@@ -331,7 +349,7 @@ def describe(event):
         goto = event.get("not_found_goto", 0)
         destino = f"ir al paso {goto}" if goto else "continuar"
         return (
-            f"Buscar '{event.get('image_path', '')}' (conf={event.get('confidence', 0.8)}): "
+            f"Buscar '{_relative_path(event.get('image_path', ''))}' (conf={event.get('confidence', 0.8)}): "
             f"si se encuentra -> {etiqueta_accion}; "
             f"si no -> esperar {event.get('not_found_wait', 0)}s y {destino}"
         )

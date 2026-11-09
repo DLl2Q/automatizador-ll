@@ -86,11 +86,12 @@ def _try_locate(pyautogui, path, **kwargs):
         return None
 
 
-def locate_image(path, region=None, confidence=0.8):
+def locate_image_box(path, region=None, confidence=0.8):
     """Busca la imagen 'path' en pantalla (o en 'region').
 
-    Devuelve (x, y) con el centro de la coincidencia, o None si no se
-    encontro. Intenta primero con el nivel de 'confidence' indicado (requiere
+    Devuelve (left, top, width, height) en coordenadas absolutas de
+    pantalla con el area de la coincidencia, o None si no se encontro.
+    Intenta primero con el nivel de 'confidence' indicado (requiere
     opencv-python); si no esta disponible, reintenta con una busqueda exacta.
     """
     if not path or not os.path.isfile(path):
@@ -108,17 +109,28 @@ def locate_image(path, region=None, confidence=0.8):
         box = _try_locate(pyautogui, path, **kwargs)
     if box is None:
         return None
-    center = pyautogui.center(box)
-    return (center.x, center.y)
+    return (int(box.left), int(box.top), int(box.width), int(box.height))
 
 
-def locate_text(text, region=None, lang="eng", case_sensitive=False):
+def locate_image(path, region=None, confidence=0.8):
+    """Busca la imagen 'path' en pantalla (o en 'region').
+
+    Devuelve (x, y) con el centro de la coincidencia, o None si no se
+    encontro."""
+    box = locate_image_box(path, region=region, confidence=confidence)
+    if box is None:
+        return None
+    left, top, width, height = box
+    return (left + width // 2, top + height // 2)
+
+
+def locate_text_box(text, region=None, lang="eng", case_sensitive=False):
     """Busca 'text' en la pantalla (o en 'region') usando OCR.
 
     Soporta busquedas de varias palabras (compara secuencias consecutivas
-    de palabras detectadas). Devuelve (x, y) con el centro del texto
-    encontrado (coordenadas absolutas de pantalla), o None si no se
-    encontro."""
+    de palabras detectadas). Devuelve (left, top, width, height) en
+    coordenadas absolutas de pantalla con el area del texto encontrado, o
+    None si no se encontro."""
     needle = (text or "").strip()
     if not needle:
         return None
@@ -155,8 +167,18 @@ def locate_text(text, region=None, lang="eng", case_sensitive=False):
         ]
         x0, y0 = min(lefts), min(tops)
         x1, y1 = max(rights), max(bottoms)
-        center_x = origin_x + (x0 + x1) // 2
-        center_y = origin_y + (y0 + y1) // 2
-        return (center_x, center_y)
+        return (origin_x + x0, origin_y + y0, x1 - x0, y1 - y0)
     return None
+
+
+def locate_text(text, region=None, lang="eng", case_sensitive=False):
+    """Busca 'text' en la pantalla (o en 'region') usando OCR.
+
+    Devuelve (x, y) con el centro del texto encontrado (coordenadas
+    absolutas de pantalla), o None si no se encontro."""
+    box = locate_text_box(text, region=region, lang=lang, case_sensitive=case_sensitive)
+    if box is None:
+        return None
+    left, top, width, height = box
+    return (left + width // 2, top + height // 2)
 
