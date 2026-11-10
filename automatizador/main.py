@@ -12,6 +12,13 @@ Atajos globales (funcionan aunque la ventana no tenga el foco):
     F9  -> iniciar / detener grabacion
     F10 -> iniciar / detener reproduccion
     Esc -> detener grabacion y reproduccion (parada de emergencia)
+
+Nota sobre apps que corren como Administrador: Windows bloquea (UIPI) los
+clics sinteticos enviados desde un proceso normal hacia una ventana que
+corre con privilegios de Administrador (el movimiento del mouse si llega,
+pero el clic no). Si la app que automatizas corre como Administrador,
+usa el menu "Ejecucion > Reiniciar como Administrador" para que
+Automatizador tenga el mismo nivel y los clics funcionen.
 """
 
 import argparse
@@ -102,6 +109,7 @@ class App:
         self._refresh_macro_list()
         self._refresh_tree()
         self._start_hotkeys()
+        self._warn_if_not_admin()
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -209,6 +217,11 @@ class App:
         )
         run_menu.add_separator()
         run_menu.add_command(label="Parada de emergencia (Esc)", command=self.emergency_stop)
+        run_menu.add_separator()
+        run_menu.add_command(
+            label="Reiniciar como Administrador (necesario para apps elevadas)",
+            command=self._relaunch_admin,
+        )
         menubar.add_cascade(label="Ejecucion", menu=run_menu)
 
         help_menu = tk.Menu(menubar, tearoff=False)
@@ -425,6 +438,40 @@ class App:
             command=self.toggle_playback,
         )
         self.play_button.pack(side="right")
+
+    # ---------- Privilegios de Administrador ----------
+    def _warn_if_not_admin(self):
+        """Si Automatizador no corre como Administrador, lo avisa en la barra
+        de estado: los clics fallaran silenciosamente (UIPI) sobre ventanas
+        que si corran como Administrador."""
+        if os.name == "nt" and not _is_admin():
+            self.status_var.set(
+                "Aviso: no se ejecuta como Administrador; los clics pueden "
+                "fallar sobre apps que si corren como Administrador "
+                "(ver menu Ejecucion)."
+            )
+
+    def _relaunch_admin(self):
+        if os.name != "nt":
+            messagebox.showinfo(APP_TITLE, "Esta opcion solo aplica en Windows.")
+            return
+        if _is_admin():
+            messagebox.showinfo(
+                APP_TITLE, "Automatizador ya se esta ejecutando como Administrador."
+            )
+            return
+        if not messagebox.askyesno(
+            APP_TITLE,
+            "Se reiniciara Automatizador como Administrador (Windows pedira "
+            "confirmacion). Es necesario para que los clics funcionen sobre "
+            "aplicaciones que tambien corren como Administrador.\n\n"
+            "¿Continuar?",
+        ):
+            return
+        if _relaunch_as_admin():
+            self._on_close()
+        else:
+            messagebox.showerror(APP_TITLE, "No se pudo reiniciar como Administrador.")
 
     # ---------- Hotkeys globales ----------
     def _start_hotkeys(self):
@@ -819,12 +866,56 @@ def run_macro_headless(name, speed=1.0, repeat=1):
     def _on_progress(done_count, total):
         print(f"[{name}] {done_count}/{total}")
 
+    if os.name == "nt" and not _is_admin():
+        print(
+            "Aviso: este proceso no corre como Administrador; los clics "
+            "pueden fallar sobre apps que si corren como Administrador."
+        )
+
     player = Player(on_progress=_on_progress, on_finished=_on_finished)
     print(f"Ejecutando '{name}' en segundo plano (velocidad={speed}, repeticiones={repeat})...")
     player.play(events, speed=max(speed, 0.1), repeat=repeat)
     done.wait()
     print(f"Macro '{name}' finalizada.")
     return 0
+
+
+def _is_admin():
+    """True si el proceso actual corre con privilegios de Administrador.
+
+    En Windows, si esto es False y la ventana objetivo de un clic corre como
+    Administrador, Windows descarta el clic sintetico por UIPI (el
+    movimiento del mouse si llega, pero el clic/soltar boton no)."""
+    if os.name != "nt":
+        return True
+    import ctypes
+
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
+        return False
+
+
+def _relaunch_as_admin():
+    """Relanza este mismo programa con privilegios de Administrador (UAC) y
+    deja que el llamador cierre el proceso actual. Devuelve True si se pudo
+    iniciar el relanzamiento."""
+    if os.name != "nt":
+        return False
+    import ctypes
+
+    if getattr(sys, "frozen", False):
+        target = sys.executable
+        extra_args = list(sys.argv[1:])
+    else:
+        target = sys.executable
+        extra_args = [os.path.abspath(__file__), *sys.argv[1:]]
+    params = " ".join(f'"{arg}"' for arg in extra_args)
+    try:
+        result = ctypes.windll.shell32.ShellExecuteW(None, "runas", target, params, None, 1)
+    except OSError:
+        return False
+    return result > 32
 
 
 def _enable_dpi_awareness():
