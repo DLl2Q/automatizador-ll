@@ -43,33 +43,30 @@ class Player:
         if self.is_playing or not events:
             return
         events = list(events)
-        if start_index and 0 < start_index < len(events):
-            events = events[start_index:]
-        if not events:
-            return
+        start_index = max(0, min(start_index, len(events) - 1)) if start_index else 0
         self._stop_flag.clear()
         self._thread = threading.Thread(
-            target=self._run, args=(events, speed, repeat), daemon=True
+            target=self._run, args=(events, speed, repeat, start_index), daemon=True
         )
         self._thread.start()
 
     def stop(self):
         self._stop_flag.set()
 
-    def _run(self, events, speed, repeat):
+    def _run(self, events, speed, repeat, start_index=0):
         try:
             done = 0
             while not self._stop_flag.is_set() and (repeat <= 0 or done < repeat):
-                self._play_once(events, speed)
+                self._play_once(events, speed, start_index if done == 0 else 0)
                 done += 1
         finally:
             if self.on_finished:
                 self.on_finished()
 
-    def _play_once(self, events, speed):
+    def _play_once(self, events, speed, start_index=0):
         speed = max(speed, 0.01)
         total = len(events)
-        index = 0
+        index = start_index
         while index < total:
             if self._stop_flag.is_set():
                 return
