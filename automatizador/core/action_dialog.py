@@ -284,7 +284,7 @@ class ActionDialog(tk.Toplevel):
                 frame, text="Probar busqueda", command=self._do_test_find_ocr
             ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 3))
             row += 1
-        if action_type == "click":
+        if action_type in ("click", "scroll"):
             ttk.Button(
                 frame,
                 text="Capturar posicion del mouse...",
