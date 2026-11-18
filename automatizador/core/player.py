@@ -26,10 +26,31 @@ class Player:
         self._keyboard = keyboard.Controller()
         self._stop_flag = threading.Event()
         self._thread = None
+        # Teclas que el propio Player esta presionando/soltando como parte de
+        # la macro (no por el usuario). Permite que los atajos globales de la
+        # app (F9/F10/Esc) ignoren estas pulsaciones sinteticas, para que una
+        # macro que use Esc como una de sus acciones no se auto-interrumpa.
+        self._synthetic_until = {}
 
     @property
     def is_playing(self):
         return self._thread is not None and self._thread.is_alive()
+
+    def mark_synthetic_key(self, key, active, grace=0.3):
+        """Marca 'key' como generada por el propio Player.
+
+        active=True mientras la tecla esta presionada por la macro; al
+        soltarla se llama con active=False, lo que deja una pequena ventana
+        de gracia (en segundos) para cubrir el retraso con el que el listener
+        global de teclado del sistema reporta el evento."""
+        self._synthetic_until[key] = float("inf") if active else time.perf_counter() + grace
+
+    def is_synthetic_key(self, key):
+        """True si 'key' fue (o acaba de ser) presionada por el propio Player."""
+        expiry = self._synthetic_until.get(key)
+        if expiry is None:
+            return False
+        return time.perf_counter() <= expiry
 
     def play(self, events, speed=1.0, repeat=1, start_index=0):
         """Inicia la reproduccion en un hilo aparte.
@@ -107,13 +128,19 @@ class Player:
             self._mouse.position = (event["x"], event["y"])
             self._mouse.scroll(event["dx"], event["dy"])
         elif kind == "key_down":
-            self._keyboard.press(str_to_key(event["key"]))
+            key = str_to_key(event["key"])
+            self.mark_synthetic_key(key, True)
+            self._keyboard.press(key)
         elif kind == "key_up":
-            self._keyboard.release(str_to_key(event["key"]))
+            key = str_to_key(event["key"])
+            self._keyboard.release(key)
+            self.mark_synthetic_key(key, False)
         elif kind == "key_press":
             key = str_to_key(event["key"])
+            self.mark_synthetic_key(key, True)
             self._keyboard.press(key)
             self._keyboard.release(key)
+            self.mark_synthetic_key(key, False)
         elif kind == "type_text":
             self._do_type_text(event, speed)
         elif kind == "wait":

@@ -344,7 +344,7 @@ class App:
 
         columns = ("idx", "delay", "tipo", "detalle", "comentarios")
         self.tree = ttk.Treeview(
-            tree_frame, columns=columns, show="headings", selectmode="browse"
+            tree_frame, columns=columns, show="headings", selectmode="extended"
         )
         self.tree.heading("idx", text="#")
         self.tree.heading("delay", text="Retraso (s)")
@@ -481,6 +481,11 @@ class App:
             elif key == keyboard.Key.f10:
                 self.root.after(0, self.toggle_playback)
             elif key == keyboard.Key.esc:
+                # Si la macro en reproduccion esta presionando/soltando Esc
+                # como parte de sus propias acciones, se ignora: solo un Esc
+                # del usuario (no generado por el Player) debe cortar la macro.
+                if self.player.is_playing and self.player.is_synthetic_key(key):
+                    return
                 self.root.after(0, self.emergency_stop)
 
         self._hotkey_listener = keyboard.Listener(on_press=on_press)
@@ -580,7 +585,7 @@ class App:
         self.status_var.set("Parada de emergencia.")
 
     # ---------- Panel de acciones ----------
-    def _refresh_tree(self, select_index=None):
+    def _refresh_tree(self, select_index=None, select_indices=None):
         self.tree.delete(*self.tree.get_children())
         for index, event in enumerate(self.current_events):
             tag = "evenrow" if index % 2 else "oddrow"
@@ -597,17 +602,24 @@ class App:
                 ),
                 tags=(tag,),
             )
-        if select_index is not None and 0 <= select_index < len(self.current_events):
-            iid = str(select_index)
-            self.tree.selection_set(iid)
-            self.tree.focus(iid)
-            self.tree.see(iid)
+        if select_indices is not None:
+            to_select = [i for i in select_indices if 0 <= i < len(self.current_events)]
+        elif select_index is not None and 0 <= select_index < len(self.current_events):
+            to_select = [select_index]
+        else:
+            to_select = []
+        if to_select:
+            iids = [str(i) for i in to_select]
+            self.tree.selection_set(iids)
+            self.tree.focus(iids[-1])
+            self.tree.see(iids[-1])
+
+    def _selected_indices(self):
+        return sorted(int(iid) for iid in self.tree.selection())
 
     def _selected_index(self):
-        selection = self.tree.selection()
-        if not selection:
-            return None
-        return int(selection[0])
+        indices = self._selected_indices()
+        return indices[0] if indices else None
 
     def _on_tree_click(self, event):
         row_id = self.tree.identify_row(event.y)
@@ -675,30 +687,49 @@ class App:
         self.status_var.set("Accion actualizada.")
 
     def _duplicate_action(self):
-        index = self._selected_index()
-        if index is None:
-            messagebox.showinfo(APP_TITLE, "Selecciona una accion de la lista.")
+        indices = self._selected_indices()
+        if not indices:
+            messagebox.showinfo(APP_TITLE, "Selecciona una o mas acciones de la lista.")
             return
-        clone = dict(self.current_events[index])
-        self.current_events.insert(index + 1, clone)
-        self._refresh_tree(select_index=index + 1)
-        self.status_var.set("Accion duplicada.")
+        new_selection = []
+        offset = 0
+        for index in indices:
+            actual_index = index + offset
+            clone = dict(self.current_events[actual_index])
+            insert_at = actual_index + 1
+            self.current_events.insert(insert_at, clone)
+            new_selection.append(insert_at)
+            offset += 1
+        self._refresh_tree(select_indices=new_selection)
+        count = len(indices)
+        self.status_var.set(
+            "Accion duplicada." if count == 1 else f"{count} acciones duplicadas."
+        )
 
     def _delete_action(self):
-        index = self._selected_index()
-        if index is None:
-            messagebox.showinfo(APP_TITLE, "Selecciona una accion de la lista.")
+        indices = self._selected_indices()
+        if not indices:
+            messagebox.showinfo(APP_TITLE, "Selecciona una o mas acciones de la lista.")
             return
-        del self.current_events[index]
-        next_index = min(index, len(self.current_events) - 1)
+        first_index = indices[0]
+        for index in sorted(indices, reverse=True):
+            del self.current_events[index]
+        next_index = min(first_index, len(self.current_events) - 1)
         self._refresh_tree(select_index=next_index if next_index >= 0 else None)
-        self.status_var.set("Accion eliminada.")
+        count = len(indices)
+        self.status_var.set(
+            "Accion eliminada." if count == 1 else f"{count} acciones eliminadas."
+        )
 
     def _move_action(self, direction):
-        index = self._selected_index()
-        if index is None:
+        indices = self._selected_indices()
+        if not indices:
             messagebox.showinfo(APP_TITLE, "Selecciona una accion de la lista.")
             return
+        if len(indices) > 1:
+            messagebox.showinfo(APP_TITLE, "Selecciona una sola accion para moverla.")
+            return
+        index = indices[0]
         new_index = index + direction
         if not 0 <= new_index < len(self.current_events):
             return
