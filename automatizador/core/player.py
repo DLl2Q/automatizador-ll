@@ -15,12 +15,16 @@ from .keys import str_to_key
 class Player:
     """Reproduce una lista de eventos generada por Recorder o por el panel de acciones."""
 
-    def __init__(self, on_progress=None, on_finished=None, on_message=None):
+    def __init__(self, on_progress=None, on_finished=None, on_message=None, on_step=None):
         self.on_progress = on_progress
         self.on_finished = on_finished
         # on_message(title, text): se invoca para mostrar un cuadro de dialogo;
         # quien registre el callback es responsable de hacerlo en el hilo de UI.
         self.on_message = on_message
+        # on_step(index): se invoca con el indice (0-based) de la accion que
+        # esta por ejecutarse justo antes de aplicarla, para que la interfaz
+        # pueda resaltar (sombrear) esa fila mientras se ejecuta.
+        self.on_step = on_step
 
         self._mouse = mouse.Controller()
         self._keyboard = keyboard.Controller()
@@ -95,6 +99,8 @@ class Player:
             delay = max(event.get("delay", 0.0), 0.0) / speed
             if not self._sleep(delay):
                 return
+            if self.on_step:
+                self.on_step(index)
             jump_to = self._apply(event, speed, events)
             if self.on_progress:
                 self.on_progress(index + 1, total)

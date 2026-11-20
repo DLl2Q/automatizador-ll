@@ -35,25 +35,31 @@ from pynput import keyboard  # noqa: E402
 
 from core import actions, storage  # noqa: E402
 from core.action_dialog import ask_action  # noqa: E402
+from core.logger import get_logger  # noqa: E402
 from core.player import Player  # noqa: E402
 from core.recorder import Recorder  # noqa: E402
 
 APP_TITLE = "Automatizador"
+log = get_logger()
 
-# ---------- Paleta de colores de la interfaz ----------
-COLOR_BG = "#f2f4f7"
+# ---------- Paleta de colores de la interfaz (tema claro moderno) ----------
+COLOR_BG = "#eef1f7"
 COLOR_PANEL = "#ffffff"
-COLOR_PRIMARY = "#1f6feb"
-COLOR_PRIMARY_DARK = "#1554b5"
-COLOR_RECORD = "#d64550"
-COLOR_RECORD_DARK = "#a9333c"
+COLOR_BORDER = "#dde2ec"
+COLOR_PRIMARY = "#3454d1"
+COLOR_PRIMARY_DARK = "#2740a6"
+COLOR_PRIMARY_LIGHT = "#e8ecfb"
+COLOR_RECORD = "#e5484d"
+COLOR_RECORD_DARK = "#b3353a"
 COLOR_PLAY = "#1f9d55"
 COLOR_PLAY_DARK = "#167a41"
-COLOR_TEXT = "#1f2933"
+COLOR_TEXT = "#1b2430"
 COLOR_MUTED = "#6b7280"
 COLOR_ROW_ODD = "#ffffff"
-COLOR_ROW_EVEN = "#eef2f9"
-COLOR_SELECTION = "#1f6feb"
+COLOR_ROW_EVEN = "#f3f5fb"
+COLOR_SELECTION = "#3454d1"
+COLOR_RUNNING_BG = "#ffe299"
+COLOR_RUNNING_FG = "#5c3d00"
 
 # ---------- Iconos en texto (sin dependencias de imagenes) ----------
 ICON_NEW = "\U0001F4C4"
@@ -80,8 +86,7 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title(APP_TITLE)
-        self.root.geometry("1040x680")
-        self.root.minsize(900, 600)
+        self._apply_responsive_geometry()
         self.root.configure(bg=COLOR_BG)
 
         self.current_events = []
@@ -92,6 +97,7 @@ class App:
         self.status_var = tk.StringVar(value="Listo.")
         self.macro_filter_var = tk.StringVar(value="")
         self._all_macro_names = []
+        self._running_index = None
 
         self.recorder = Recorder(
             on_event=self._on_record_event,
@@ -101,6 +107,7 @@ class App:
             on_progress=self._on_play_progress,
             on_finished=self._on_play_finished,
             on_message=self._on_play_message,
+            on_step=self._on_play_step,
         )
 
         self._setup_style()
@@ -112,6 +119,22 @@ class App:
         self._warn_if_not_admin()
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        log.info("Automatizador iniciado.")
+
+    # ---------- Geometria adaptable a la resolucion de pantalla ----------
+    def _apply_responsive_geometry(self):
+        """Calcula el tamano inicial de la ventana como una fraccion de la
+        resolucion de pantalla disponible (en vez de un tamano fijo), para
+        que se adapte bien tanto a pantallas pequenas como a monitores
+        grandes o con escalado de Windows distinto."""
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        width = max(900, min(int(screen_w * 0.75), 1400))
+        height = max(600, min(int(screen_h * 0.8), 900))
+        pos_x = max(0, (screen_w - width) // 2)
+        pos_y = max(0, (screen_h - height) // 2)
+        self.root.geometry(f"{width}x{height}+{pos_x}+{pos_y}")
+        self.root.minsize(min(900, screen_w - 40), min(560, screen_h - 80))
 
     # ---------- Estilo visual ----------
     def _setup_style(self):
@@ -121,36 +144,63 @@ class App:
         except tk.TclError:
             pass
 
-        default_font = ("Segoe UI", 10)
-        bold_font = ("Segoe UI", 10, "bold")
+        # Escala la tipografia segun el DPI/resolucion real de la pantalla,
+        # para que la interfaz se vea proporcionada tanto en monitores
+        # pequenos como en pantallas grandes o con escalado de Windows.
+        try:
+            dpi_scale = self.root.winfo_fpixels("1i") / 72.0
+        except tk.TclError:
+            dpi_scale = 1.0
+        base_size = max(9, min(11, round(10 * dpi_scale)))
+        default_font = ("Segoe UI", base_size)
+        bold_font = ("Segoe UI", base_size, "bold")
+        heading_font = ("Segoe UI", base_size + 1, "bold")
         self.root.option_add("*Font", default_font)
+        self._row_height = int(26 * max(dpi_scale, 1.0))
 
         style.configure(".", background=COLOR_BG, foreground=COLOR_TEXT, font=default_font)
         style.configure("TFrame", background=COLOR_BG)
         style.configure("Panel.TFrame", background=COLOR_PANEL)
         style.configure(
-            "TLabelframe", background=COLOR_PANEL, foreground=COLOR_TEXT, borderwidth=1
+            "Card.TFrame", background=COLOR_PANEL, relief="flat", borderwidth=1
+        )
+        style.configure(
+            "TLabelframe",
+            background=COLOR_PANEL,
+            foreground=COLOR_TEXT,
+            borderwidth=1,
+            relief="solid",
+            bordercolor=COLOR_BORDER,
         )
         style.configure(
             "TLabelframe.Label",
             background=COLOR_PANEL,
             foreground=COLOR_PRIMARY_DARK,
-            font=bold_font,
+            font=heading_font,
         )
         style.configure("TLabel", background=COLOR_BG, foreground=COLOR_TEXT)
         style.configure("Panel.TLabel", background=COLOR_PANEL, foreground=COLOR_TEXT)
         style.configure("Muted.TLabel", background=COLOR_BG, foreground=COLOR_MUTED)
-        style.configure("Title.TLabel", background=COLOR_BG, foreground=COLOR_PRIMARY_DARK)
+        style.configure(
+            "PanelMuted.TLabel", background=COLOR_PANEL, foreground=COLOR_MUTED
+        )
+        style.configure(
+            "Title.TLabel", background=COLOR_BG, foreground=COLOR_PRIMARY_DARK, font=heading_font
+        )
         style.configure("Status.TLabel", background=COLOR_BG, foreground=COLOR_PRIMARY_DARK)
 
-        style.configure("TButton", padding=6, relief="flat")
-        style.map("TButton", background=[("active", "#dfe7f3")])
+        style.configure("TButton", padding=7, relief="flat", font=default_font)
+        style.map(
+            "TButton",
+            background=[("active", COLOR_PRIMARY_LIGHT), ("pressed", COLOR_PRIMARY_LIGHT)],
+        )
 
         style.configure(
             "Record.TButton",
             background=COLOR_RECORD,
             foreground="white",
-            padding=8,
+            padding=9,
+            font=bold_font,
         )
         style.map(
             "Record.TButton",
@@ -161,20 +211,43 @@ class App:
             "Play.TButton",
             background=COLOR_PLAY,
             foreground="white",
-            padding=8,
+            padding=9,
+            font=bold_font,
         )
         style.map(
             "Play.TButton",
             background=[("active", COLOR_PLAY_DARK), ("pressed", COLOR_PLAY_DARK)],
         )
 
-        style.configure("Treeview", rowheight=24, font=default_font, background=COLOR_PANEL)
-        style.configure("Treeview.Heading", font=bold_font, background="#dfe7f3")
+        style.configure(
+            "Treeview",
+            rowheight=self._row_height,
+            font=default_font,
+            background=COLOR_PANEL,
+            fieldbackground=COLOR_PANEL,
+            borderwidth=0,
+        )
+        style.configure(
+            "Treeview.Heading",
+            font=bold_font,
+            background=COLOR_PRIMARY_LIGHT,
+            foreground=COLOR_PRIMARY_DARK,
+            relief="flat",
+        )
         style.map(
             "Treeview",
             background=[("selected", COLOR_SELECTION)],
             foreground=[("selected", "white")],
         )
+        style.configure("TPanedwindow", background=COLOR_BG)
+        style.configure("TSeparator", background=COLOR_BORDER)
+        style.configure(
+            "TSpinbox",
+            arrowsize=max(12, int(12 * dpi_scale)),
+            padding=4,
+        )
+        style.configure("TEntry", padding=4)
+        style.configure("TCombobox", padding=4)
 
     # ---------- Menu ----------
     def _build_menu(self):
@@ -241,27 +314,28 @@ class App:
 
     # ---------- UI ----------
     def _build_ui(self):
-        top = tk.Frame(self.root, bg=COLOR_PRIMARY, height=56)
+        top = tk.Frame(self.root, bg=COLOR_PRIMARY, height=60)
         top.pack(fill="x")
         inner_top = tk.Frame(top, bg=COLOR_PRIMARY)
-        inner_top.pack(fill="both", expand=True, padx=16, pady=10)
+        inner_top.pack(fill="both", expand=True, padx=18, pady=12)
         tk.Label(
             inner_top,
-            text=APP_TITLE,
-            font=("Segoe UI", 16, "bold"),
+            text=f"\u2699 {APP_TITLE}",
+            font=("Segoe UI", 17, "bold"),
             bg=COLOR_PRIMARY,
             fg="white",
         ).pack(side="left")
         tk.Label(
             inner_top,
-            text="F9 Grabar   |   F10 Reproducir   |   Esc Detener",
+            text="F9 Grabar   \u2022   F10 Reproducir   \u2022   Esc Detener",
             bg=COLOR_PRIMARY,
             fg="#dbe7fb",
             font=("Segoe UI", 9),
         ).pack(side="right")
 
         paned = ttk.PanedWindow(self.root, orient="horizontal")
-        paned.pack(fill="both", expand=True, padx=10, pady=10)
+        paned.pack(fill="both", expand=True, padx=12, pady=12)
+        self._main_paned = paned
 
         left = ttk.LabelFrame(paned, text="Macros guardadas")
         paned.add(left, weight=1)
@@ -273,8 +347,16 @@ class App:
         self._build_record_panel(right)
         self._build_play_panel(right)
 
+        # Ajusta la proporcion inicial entre el panel de macros y el de
+        # acciones segun el ancho real de la ventana (en vez de un valor
+        # fijo), para que la division se vea equilibrada en cualquier
+        # resolucion de pantalla.
+        self.root.update_idletasks()
+        total_width = max(self.root.winfo_width(), 900)
+        self.root.after(0, lambda: paned.sashpos(0, int(total_width * 0.25)))
+
         status_frame = tk.Frame(self.root, bg=COLOR_BG)
-        status_frame.pack(fill="x", padx=10, pady=(0, 8))
+        status_frame.pack(fill="x", padx=12, pady=(0, 10))
         ttk.Label(status_frame, textvariable=self.status_var, style="Status.TLabel").pack(
             side="left"
         )
@@ -290,6 +372,7 @@ class App:
         filter_entry = ttk.Entry(search_frame, textvariable=self.macro_filter_var)
         filter_entry.pack(side="left", fill="x", expand=True, padx=(4, 0))
         self.macro_filter_var.trace_add("write", lambda *_a: self._apply_macro_filter())
+
 
         list_frame = ttk.Frame(parent, style="Panel.TFrame")
         list_frame.pack(side="top", fill="both", expand=True, padx=8, pady=(0, 8))
@@ -359,6 +442,9 @@ class App:
         self.tree.tag_configure("oddrow", background=COLOR_ROW_ODD)
         self.tree.tag_configure("evenrow", background=COLOR_ROW_EVEN)
         self.tree.tag_configure("legacygoto", background="#fdecea", foreground="#c0392b")
+        self.tree.tag_configure(
+            "runningrow", background=COLOR_RUNNING_BG, foreground=COLOR_RUNNING_FG
+        )
         self.tree.pack(side="left", fill="both", expand=True)
         self.tree.bind("<Double-1>", lambda _e: self._edit_action())
         self.tree.bind("<ButtonRelease-1>", self._on_tree_click)
@@ -501,11 +587,13 @@ class App:
             self.record_button.config(text=f"{ICON_RECORD} Grabar (F9)")
             self._refresh_tree()
             self.status_var.set(f"Grabacion detenida: {len(self.current_events)} eventos.")
+            log.info("Grabacion detenida: %d eventos.", len(self.current_events))
         else:
             self.recorder.record_mouse_move = self.record_mouse_move.get()
             self.recorder.start()
             self.record_button.config(text=f"{ICON_STOP} Detener (F9)")
             self.status_var.set("Grabando... 0 eventos")
+            log.info("Grabacion iniciada.")
 
     def _toggle_record_mouse_move(self):
         self.recorder.record_mouse_move = self.record_mouse_move.get()
@@ -520,6 +608,7 @@ class App:
         if self.player.is_playing:
             self.player.stop()
             self.status_var.set("Deteniendo reproduccion...")
+            log.info("Reproduccion detenida por el usuario.")
             return
         if not self.current_events:
             self.status_var.set("No hay acciones cargadas o grabadas para reproducir.")
@@ -529,6 +618,12 @@ class App:
         self.progress.config(value=0, maximum=max(len(self.current_events), 1))
         self.play_button.config(text=f"{ICON_STOP} Detener (F10)")
         self.status_var.set("Reproduciendo...")
+        log.info(
+            "Iniciando reproduccion: %d acciones, velocidad=%s, repeticiones=%s.",
+            len(self.current_events),
+            speed,
+            repeat,
+        )
         self.player.play(self.current_events, speed=speed, repeat=repeat)
 
     def play_from_selected(self):
@@ -554,6 +649,7 @@ class App:
         self.progress.config(value=0, maximum=max(remaining, 1))
         self.play_button.config(text=f"{ICON_STOP} Detener (F10)")
         self.status_var.set(f"Reproduciendo desde la accion #{index + 1}...")
+        log.info("Iniciando reproduccion desde la accion #%d.", index + 1)
         self.player.play(self.current_events, speed=speed, repeat=repeat, start_index=index)
 
     def _on_play_progress(self, done, total):
@@ -563,11 +659,48 @@ class App:
 
         self.root.after(0, update)
 
+    def _on_play_step(self, index):
+        """Se invoca desde el hilo del Player justo antes de ejecutar la
+        accion 'index'; reprograma el resaltado (sombreado) de esa fila en
+        el hilo de la interfaz para que se note cual accion esta en marcha."""
+        self.root.after(0, lambda: self._set_running_row(index))
+
+    def _set_running_row(self, index):
+        self._running_index = index
+        self._apply_row_tags()
+        if 0 <= index < len(self.current_events):
+            iid = str(index)
+            if self.tree.exists(iid):
+                self.tree.see(iid)
+
+    def _clear_running_row(self):
+        self._running_index = None
+        self._apply_row_tags()
+
+    def _apply_row_tags(self):
+        """Vuelve a calcular el tag de color de cada fila del Treeview sin
+        reconstruir la lista completa (mas eficiente que _refresh_tree
+        mientras una reproduccion esta en marcha)."""
+        for index, event in enumerate(self.current_events):
+            iid = str(index)
+            if not self.tree.exists(iid):
+                continue
+            self.tree.item(iid, tags=(self._row_tag(index, event),))
+
+    def _row_tag(self, index, event):
+        if index == self._running_index:
+            return "runningrow"
+        if actions.uses_legacy_goto(event):
+            return "legacygoto"
+        return "evenrow" if index % 2 else "oddrow"
+
     def _on_play_finished(self):
         def update():
             self.play_button.config(text=f"{ICON_PLAY} Reproducir (F10)")
             self.status_var.set("Reproduccion finalizada.")
             self.progress.config(value=0)
+            self._clear_running_row()
+            log.info("Reproduccion finalizada.")
 
         self.root.after(0, update)
 
@@ -579,19 +712,20 @@ class App:
             self.current_events = self.recorder.stop()
             self.record_button.config(text=f"{ICON_RECORD} Grabar (F9)")
             self._refresh_tree()
+            log.warning("Grabacion detenida por parada de emergencia.")
         if self.player.is_playing:
             self.player.stop()
             self.play_button.config(text=f"{ICON_PLAY} Reproducir (F10)")
+            log.warning("Reproduccion detenida por parada de emergencia.")
         self.progress.config(value=0)
+        self._clear_running_row()
         self.status_var.set("Parada de emergencia.")
 
     # ---------- Panel de acciones ----------
     def _refresh_tree(self, select_index=None, select_indices=None):
         self.tree.delete(*self.tree.get_children())
         for index, event in enumerate(self.current_events):
-            tag = "evenrow" if index % 2 else "oddrow"
-            if actions.uses_legacy_goto(event):
-                tag = "legacygoto"
+            tag = self._row_tag(index, event)
             self.tree.insert(
                 "",
                 "end",
@@ -674,6 +808,7 @@ class App:
         self.current_events.insert(insert_at, event)
         self._refresh_tree(select_index=insert_at)
         self.status_var.set("Accion agregada.")
+        log.info("Accion agregada en la posicion #%d (%s).", insert_at + 1, event.get("type"))
 
     def _edit_action(self):
         if self.player.is_playing or self.recorder.is_recording:
@@ -690,6 +825,7 @@ class App:
         self.current_events[index] = event
         self._refresh_tree(select_index=index)
         self.status_var.set("Accion actualizada.")
+        log.info("Accion #%d actualizada.", index + 1)
 
     def _duplicate_action(self):
         indices = self._selected_indices()
@@ -725,6 +861,7 @@ class App:
         self.status_var.set(
             "Accion eliminada." if count == 1 else f"{count} acciones eliminadas."
         )
+        log.info("%d accion(es) eliminadas.", count)
 
     def _move_action(self, direction):
         indices = self._selected_indices()
@@ -777,6 +914,7 @@ class App:
         self.current_macro_name = None
         self._refresh_tree()
         self.status_var.set("Nueva macro vacia.")
+        log.info("Nueva macro vacia creada.")
 
     def _load_selected(self):
         name = self._selected_name()
@@ -787,10 +925,12 @@ class App:
             self.current_events = storage.load_macro(name)
         except (OSError, ValueError) as exc:
             messagebox.showerror(APP_TITLE, f"No se pudo cargar '{name}':\n{exc}")
+            log.error("No se pudo cargar la macro '%s': %s", name, exc)
             return
         self.current_macro_name = name
         self._refresh_tree()
         self.status_var.set(f"Macro '{name}' cargada: {len(self.current_events)} acciones.")
+        log.info("Macro '%s' cargada: %d acciones.", name, len(self.current_events))
 
     def _save(self):
         if not self.current_events:
@@ -802,6 +942,7 @@ class App:
         path = storage.save_macro(self.current_macro_name, self.current_events)
         self.status_var.set(f"Macro guardada en {path}")
         self._refresh_macro_list()
+        log.info("Macro '%s' guardada en %s", self.current_macro_name, path)
 
     def _save_as(self):
         if not self.current_events:
@@ -816,6 +957,7 @@ class App:
         self.current_macro_name = name
         self.status_var.set(f"Macro guardada en {path}")
         self._refresh_macro_list()
+        log.info("Macro '%s' guardada en %s", name, path)
 
     def _delete_selected(self):
         name = self._selected_name()
@@ -828,6 +970,7 @@ class App:
                 self.current_macro_name = None
             self._refresh_macro_list()
             self.status_var.set(f"Macro '{name}' eliminada.")
+            log.info("Macro '%s' eliminada.", name)
 
     # ---------- Ejecucion en segundo plano ----------
     def _run_background_selected(self):
@@ -863,10 +1006,12 @@ class App:
             messagebox.showerror(
                 APP_TITLE, f"No se pudo iniciar '{name}' en segundo plano:\n{exc}"
             )
+            log.error("No se pudo iniciar '%s' en segundo plano: %s", name, exc)
             return
         self.status_var.set(
             f"Macro '{name}' ejecutandose en segundo plano (proceso independiente)."
         )
+        log.info("Macro '%s' lanzada en segundo plano (proceso independiente).", name)
 
     # ---------- Cierre ----------
     def _on_close(self):
@@ -876,6 +1021,7 @@ class App:
             self.player.stop()
         if self._hotkey_listener is not None:
             self._hotkey_listener.stop()
+        log.info("Automatizador cerrado.")
         self.root.destroy()
 
 
