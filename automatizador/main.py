@@ -358,6 +358,7 @@ class App:
         self.tree.column("comentarios", width=150, anchor="w", stretch=False)
         self.tree.tag_configure("oddrow", background=COLOR_ROW_ODD)
         self.tree.tag_configure("evenrow", background=COLOR_ROW_EVEN)
+        self.tree.tag_configure("legacygoto", background="#fdecea", foreground="#c0392b")
         self.tree.pack(side="left", fill="both", expand=True)
         self.tree.bind("<Double-1>", lambda _e: self._edit_action())
         self.tree.bind("<ButtonRelease-1>", self._on_tree_click)
@@ -589,6 +590,8 @@ class App:
         self.tree.delete(*self.tree.get_children())
         for index, event in enumerate(self.current_events):
             tag = "evenrow" if index % 2 else "oddrow"
+            if actions.uses_legacy_goto(event):
+                tag = "legacygoto"
             self.tree.insert(
                 "",
                 "end",
@@ -663,7 +666,7 @@ class App:
     def _add_action(self):
         if self.player.is_playing or self.recorder.is_recording:
             return
-        event = ask_action(self.root)
+        event = ask_action(self.root, all_events=self.current_events)
         if event is None:
             return
         index = self._selected_index()
@@ -679,7 +682,9 @@ class App:
         if index is None:
             messagebox.showinfo(APP_TITLE, "Selecciona una accion de la lista.")
             return
-        event = ask_action(self.root, self.current_events[index])
+        event = ask_action(
+            self.root, self.current_events[index], all_events=self.current_events
+        )
         if event is None:
             return
         self.current_events[index] = event

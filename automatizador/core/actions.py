@@ -120,10 +120,10 @@ ACTION_TYPES = {
             ("offset_y", "Desplazamiento Y desde el centro encontrado", "int", 0, None),
             ("not_found_wait", "Si no se encuentra: esperar (s)", "float", 1.0, None),
             (
-                "not_found_goto",
-                "Si no se encuentra: ir al paso # (0 = continuar)",
-                "int",
-                0,
+                "not_found_goto_comment",
+                "Si no se encuentra: ir al paso con comentario (vacio = continuar)",
+                "comment_ref",
+                "",
                 None,
             ),
         ],
@@ -149,10 +149,10 @@ ACTION_TYPES = {
             ("offset_y", "Desplazamiento Y desde el centro encontrado", "int", 0, None),
             ("not_found_wait", "Si no se encuentra: esperar (s)", "float", 1.0, None),
             (
-                "not_found_goto",
-                "Si no se encuentra: ir al paso # (0 = continuar)",
-                "int",
-                0,
+                "not_found_goto_comment",
+                "Si no se encuentra: ir al paso con comentario (vacio = continuar)",
+                "comment_ref",
+                "",
                 None,
             ),
         ],
@@ -298,6 +298,50 @@ def _key_display(event):
     return keys.key_str_to_display(event.get("key", ""))
 
 
+def comment_for_index(events, index):
+    """Devuelve el comentario de la accion en la posicion `index` (0-based)
+    de `events`, o cadena vacia si esa accion no tiene comentario o el
+    indice no es valido."""
+    if 0 <= index < len(events):
+        return events[index].get("comment", "") or ""
+    return ""
+
+
+def index_for_comment(events, comment):
+    """Busca en `events` la primera accion cuyo comentario coincide
+    (sin distinguir mayusculas/minusculas) con `comment` y devuelve su
+    numero de paso 1-based, o 0 si no se encuentra o `comment` esta vacio."""
+    comment = (comment or "").strip()
+    if not comment:
+        return 0
+    comment_lower = comment.lower()
+    for idx, ev in enumerate(events):
+        if (ev.get("comment", "") or "").strip().lower() == comment_lower:
+            return idx + 1
+    return 0
+
+
+def uses_legacy_goto(event):
+    """True si el evento todavia usa el campo numerico obsoleto
+    'not_found_goto' (en vez del nuevo 'not_found_goto_comment'), lo que
+    significa que viene de una macro creada antes de este cambio."""
+    return bool(event.get("not_found_goto", 0))
+
+
+def _not_found_destino(event, events=None):
+    """Texto legible de a donde salta la accion si no se encuentra algo:
+    usa el comentario de destino ('not_found_goto_comment') cuando esta
+    definido; si la accion viene de una macro antigua y todavia tiene el
+    numero de paso obsoleto ('not_found_goto'), lo indica como tal."""
+    comment_ref = (event.get("not_found_goto_comment", "") or "").strip()
+    if comment_ref:
+        return f"ir al paso '{comment_ref}'"
+    if uses_legacy_goto(event):
+        goto = event.get("not_found_goto", 0)
+        return f"ir al paso #{goto} (obsoleto, usar comentario)"
+    return "continuar"
+
+
 def describe(event):
     """Genera una descripcion corta y legible de un evento para la lista."""
     kind = event.get("type")
@@ -346,8 +390,7 @@ def describe(event):
             "move": "mover el mouse",
             "none": "nada",
         }.get(event.get("found_action", "click"), event.get("found_action", "click"))
-        goto = event.get("not_found_goto", 0)
-        destino = f"ir al paso {goto}" if goto else "continuar"
+        destino = _not_found_destino(event)
         return (
             f"Buscar '{_relative_path(event.get('image_path', ''))}' (conf={event.get('confidence', 0.8)}): "
             f"si se encuentra -> {etiqueta_accion}; "
@@ -361,8 +404,7 @@ def describe(event):
             "move": "mover el mouse",
             "none": "nada",
         }.get(event.get("found_action", "click"), event.get("found_action", "click"))
-        goto = event.get("not_found_goto", 0)
-        destino = f"ir al paso {goto}" if goto else "continuar"
+        destino = _not_found_destino(event)
         return (
             f"Buscar texto (OCR) {event.get('text', '')!r}: "
             f"si se encuentra -> {etiqueta_accion}; "

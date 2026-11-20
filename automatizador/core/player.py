@@ -8,7 +8,7 @@ import webbrowser
 
 from pynput import keyboard, mouse
 
-from . import image_search
+from . import actions, image_search
 from .keys import str_to_key
 
 
@@ -95,7 +95,7 @@ class Player:
             delay = max(event.get("delay", 0.0), 0.0) / speed
             if not self._sleep(delay):
                 return
-            jump_to = self._apply(event, speed)
+            jump_to = self._apply(event, speed, events)
             if self.on_progress:
                 self.on_progress(index + 1, total)
             if self._stop_flag.is_set():
@@ -116,7 +116,7 @@ class Player:
                 return False
             time.sleep(min(remaining, 0.01))
 
-    def _apply(self, event, speed=1.0):
+    def _apply(self, event, speed=1.0, events=None):
         kind = event["type"]
         if kind == "move":
             self._mouse.position = (event["x"], event["y"])
@@ -155,9 +155,9 @@ class Player:
         elif kind == "capture_image":
             self._do_capture_image(event)
         elif kind == "find_image":
-            return self._do_find_image(event, speed)
+            return self._do_find_image(event, speed, events)
         elif kind == "find_ocr":
-            return self._do_find_ocr(event, speed)
+            return self._do_find_ocr(event, speed, events)
         return None
 
     def _do_click(self, event):
@@ -234,12 +234,13 @@ class Player:
         except Exception:  # noqa: BLE001 - no se interrumpe la macro por un error de captura
             pass
 
-    def _do_find_image(self, event, speed):
+    def _do_find_image(self, event, speed, events=None):
         """Busca la imagen de referencia en pantalla.
 
         Si se encuentra, ejecuta la accion de mouse indicada y continua con
         el siguiente paso (devuelve None). Si no se encuentra, espera
-        'not_found_wait' segundos y, si 'not_found_goto' es > 0, devuelve ese
+        'not_found_wait' segundos y, si 'not_found_goto_comment' (o el
+        obsoleto 'not_found_goto') resuelve a un paso valido, devuelve ese
         numero de paso (1-based) para que _play_once salte ahi."""
         path = event.get("image_path", "")
         location = None
@@ -252,9 +253,9 @@ class Player:
                 )
             except Exception:  # noqa: BLE001 - dependencia faltante u otro error: no encontrada
                 location = None
-        return self._resolve_found_location(event, location, speed)
+        return self._resolve_found_location(event, location, speed, events)
 
-    def _do_find_ocr(self, event, speed):
+    def _do_find_ocr(self, event, speed, events=None):
         """Busca un texto en pantalla por OCR y aplica las mismas opciones
         de "si se encuentra / si no se encuentra" que _do_find_image."""
         text = event.get("text", "")
@@ -269,9 +270,9 @@ class Player:
                 )
             except Exception:  # noqa: BLE001 - dependencia faltante u otro error: no encontrada
                 location = None
-        return self._resolve_found_location(event, location, speed)
+        return self._resolve_found_location(event, location, speed, events)
 
-    def _resolve_found_location(self, event, location, speed):
+    def _resolve_found_location(self, event, location, speed, events=None):
         if location is not None:
             x = location[0] + event.get("offset_x", 0)
             y = location[1] + event.get("offset_y", 0)
@@ -281,6 +282,12 @@ class Player:
         wait_seconds = max(event.get("not_found_wait", 0.0), 0.0) / max(speed, 0.01)
         if not self._sleep(wait_seconds):
             return None
+
+        comment_ref = event.get("not_found_goto_comment", "")
+        if comment_ref and events is not None:
+            goto = actions.index_for_comment(events, comment_ref)
+            return goto if goto > 0 else None
+
         goto = event.get("not_found_goto", 0)
         return goto if goto and goto > 0 else None
 

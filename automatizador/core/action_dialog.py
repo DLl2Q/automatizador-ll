@@ -33,7 +33,7 @@ def _import_pil():
 class ActionDialog(tk.Toplevel):
     """Ventana modal para crear/editar una accion. Deja el resultado en self.result."""
 
-    def __init__(self, parent, event=None):
+    def __init__(self, parent, event=None, all_events=None):
         super().__init__(parent)
         self.title("Editar accion" if event else "Agregar accion")
         self.resizable(False, False)
@@ -47,6 +47,13 @@ class ActionDialog(tk.Toplevel):
         self._variant_label_to_member = {}
         self._preview_label = None
         self._preview_photo = None
+        # Comentarios de las demas acciones de la macro, usados para poblar
+        # el selector "ir al paso con comentario" de find_image/find_ocr.
+        self._available_comments = [
+            ev.get("comment", "").strip()
+            for ev in (all_events or [])
+            if ev is not event and (ev.get("comment", "") or "").strip()
+        ]
 
         raw_initial_type = (event or {}).get("type", actions.ACTION_ORDER[0])
         initial_type = actions.group_for_member(raw_initial_type) or raw_initial_type
@@ -178,9 +185,30 @@ class ActionDialog(tk.Toplevel):
             )
             self._build_field(row, name, kind, value, choices)
             row += 1
+            if name == "not_found_goto_comment" and matched_event and actions.uses_legacy_goto(
+                matched_event
+            ):
+                row = self._build_legacy_goto_warning(row, matched_event)
 
         self._build_extra_tools(row, member_type)
         self._variant_type = member_type
+
+    def _build_legacy_goto_warning(self, row, matched_event):
+        """Muestra en rojo el campo numerico obsoleto 'not_found_goto' cuando
+        la accion editada todavia lo usa (viene de una macro creada antes de
+        este cambio), para que se note y se pueda migrar al comentario sin
+        romper esa macro mientras tanto."""
+        frame = self.fields_frame
+        tk.Label(
+            frame,
+            text="Usa el paso # obsoleto (ir al paso con comentario vacio):",
+            fg="red",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 3))
+        var = tk.StringVar(value=str(matched_event.get("not_found_goto", 0)))
+        entry = tk.Entry(frame, textvariable=var, width=10, fg="red")
+        entry.grid(row=row, column=2, sticky="w", pady=(0, 3))
+        self._field_vars["not_found_goto"] = ("int", var)
+        return row + 1
 
     def _build_field(self, row, name, kind, value, choices):
         frame = self.fields_frame
@@ -250,6 +278,12 @@ class ActionDialog(tk.Toplevel):
             ttk.Button(
                 frame, text="Guardar como...", command=lambda v=var: self._choose_save_path(v)
             ).grid(row=row, column=2, sticky="w", padx=(6, 0), pady=3)
+            self._field_vars[name] = (kind, var)
+        elif kind == "comment_ref":
+            var = tk.StringVar(value=str(value))
+            ttk.Combobox(
+                frame, textvariable=var, width=30, values=self._available_comments
+            ).grid(row=row, column=1, columnspan=2, sticky="w", pady=3)
             self._field_vars[name] = (kind, var)
 
     def _build_extra_tools(self, row, action_type):
@@ -571,6 +605,12 @@ class ActionDialog(tk.Toplevel):
                 event[name] = bool(raw)
             else:
                 event[name] = raw
+
+        if "not_found_goto" in self._field_vars and "not_found_goto" not in event:
+            try:
+                event["not_found_goto"] = int(float(self._field_vars["not_found_goto"][1].get()))
+            except (TypeError, ValueError):
+                event["not_found_goto"] = 0
         return event
 
     def _on_accept(self):
@@ -752,8 +792,8 @@ def flash_region(parent, box, duration_ms=1500):
     overlay.after(duration_ms, overlay.destroy)
 
 
-def ask_action(parent, event=None):
+def ask_action(parent, event=None, all_events=None):
     """Abre el dialogo y devuelve el evento resultante, o None si se cancela."""
-    dialog = ActionDialog(parent, event)
+    dialog = ActionDialog(parent, event, all_events=all_events)
     parent.wait_window(dialog)
     return dialog.result
