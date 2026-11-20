@@ -98,6 +98,7 @@ class App:
         self.macro_filter_var = tk.StringVar(value="")
         self._all_macro_names = []
         self._running_index = None
+        self._manual_stop = False
 
         self.recorder = Recorder(
             on_event=self._on_record_event,
@@ -606,6 +607,7 @@ class App:
         if self.recorder.is_recording:
             return
         if self.player.is_playing:
+            self._manual_stop = True
             self.player.stop()
             self.status_var.set("Deteniendo reproduccion...")
             log.info("Reproduccion detenida por el usuario.")
@@ -613,6 +615,7 @@ class App:
         if not self.current_events:
             self.status_var.set("No hay acciones cargadas o grabadas para reproducir.")
             return
+        self._manual_stop = False
         speed = max(self.speed_var.get(), 0.1)
         repeat = self.repeat_var.get()
         self.progress.config(value=0, maximum=max(len(self.current_events), 1))
@@ -647,6 +650,7 @@ class App:
         repeat = self.repeat_var.get()
         remaining = len(self.current_events) - index
         self.progress.config(value=0, maximum=max(remaining, 1))
+        self._manual_stop = False
         self.play_button.config(text=f"{ICON_STOP} Detener (F10)")
         self.status_var.set(f"Reproduciendo desde la accion #{index + 1}...")
         log.info("Iniciando reproduccion desde la accion #%d.", index + 1)
@@ -697,10 +701,17 @@ class App:
     def _on_play_finished(self):
         def update():
             self.play_button.config(text=f"{ICON_PLAY} Reproducir (F10)")
-            self.status_var.set("Reproduccion finalizada.")
             self.progress.config(value=0)
-            self._clear_running_row()
-            log.info("Reproduccion finalizada.")
+            if self._manual_stop:
+                # El usuario pidio detener la reproduccion: se deja el
+                # sombreado en la ultima accion que se ejecuto antes del
+                # pare, para poder identificarla facilmente.
+                self.status_var.set("Reproduccion detenida.")
+                log.info("Reproduccion detenida (sombreado conservado en la ultima accion).")
+            else:
+                self.status_var.set("Reproduccion finalizada.")
+                self._clear_running_row()
+                log.info("Reproduccion finalizada.")
 
         self.root.after(0, update)
 
@@ -714,11 +725,11 @@ class App:
             self._refresh_tree()
             log.warning("Grabacion detenida por parada de emergencia.")
         if self.player.is_playing:
+            self._manual_stop = True
             self.player.stop()
             self.play_button.config(text=f"{ICON_PLAY} Reproducir (F10)")
             log.warning("Reproduccion detenida por parada de emergencia.")
         self.progress.config(value=0)
-        self._clear_running_row()
         self.status_var.set("Parada de emergencia.")
 
     # ---------- Panel de acciones ----------
@@ -832,20 +843,19 @@ class App:
         if not indices:
             messagebox.showinfo(APP_TITLE, "Selecciona una o mas acciones de la lista.")
             return
-        new_selection = []
-        offset = 0
-        for index in indices:
-            actual_index = index + offset
-            clone = dict(self.current_events[actual_index])
-            insert_at = actual_index + 1
-            self.current_events.insert(insert_at, clone)
-            new_selection.append(insert_at)
-            offset += 1
+        # Duplica el bloque seleccionado como grupo: los clones se insertan
+        # juntos, en el mismo orden, justo despues de la ultima accion
+        # seleccionada, en vez de dispersarse entre las acciones originales.
+        clones = [dict(self.current_events[index]) for index in indices]
+        insert_at = indices[-1] + 1
+        self.current_events[insert_at:insert_at] = clones
+        new_selection = list(range(insert_at, insert_at + len(clones)))
         self._refresh_tree(select_indices=new_selection)
         count = len(indices)
         self.status_var.set(
-            "Accion duplicada." if count == 1 else f"{count} acciones duplicadas."
+            "Accion duplicada." if count == 1 else f"{count} acciones duplicadas (en grupo)."
         )
+        log.info("%d accion(es) duplicadas en grupo tras la posicion #%d.", count, insert_at)
 
     def _delete_action(self):
         indices = self._selected_indices()
@@ -912,6 +922,7 @@ class App:
             return
         self.current_events = []
         self.current_macro_name = None
+        self._running_index = None
         self._refresh_tree()
         self.status_var.set("Nueva macro vacia.")
         log.info("Nueva macro vacia creada.")
@@ -928,6 +939,7 @@ class App:
             log.error("No se pudo cargar la macro '%s': %s", name, exc)
             return
         self.current_macro_name = name
+        self._running_index = None
         self._refresh_tree()
         self.status_var.set(f"Macro '{name}' cargada: {len(self.current_events)} acciones.")
         log.info("Macro '%s' cargada: %d acciones.", name, len(self.current_events))

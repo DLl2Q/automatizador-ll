@@ -10,6 +10,9 @@ from pynput import keyboard, mouse
 
 from . import actions, image_search
 from .keys import str_to_key
+from .logger import get_logger
+
+log = get_logger()
 
 
 class Player:
@@ -101,12 +104,18 @@ class Player:
                 return
             if self.on_step:
                 self.on_step(index)
+            log.info(
+                "Ejecutando accion %d/%d: %s", index + 1, total, actions.describe(event)
+            )
             jump_to = self._apply(event, speed, events)
             if self.on_progress:
                 self.on_progress(index + 1, total)
             if self._stop_flag.is_set():
                 return
             if jump_to is not None and jump_to > 0:
+                log.info(
+                    "No encontrado en accion %d: saltando al paso #%d.", index + 1, jump_to
+                )
                 index = max(0, min(jump_to - 1, total - 1))
             else:
                 index += 1
